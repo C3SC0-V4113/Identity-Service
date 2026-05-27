@@ -1,8 +1,31 @@
 # Identity Service
 
-Identity and access backend for portfolio demos.
+Identity and access backend for portfolio projects and demos.
 
-This service starts with a Fastify + TypeScript foundation. Auth domain features such as users, credentials, sessions, project roles, audit logs, OpenClaw admin operations, and MCP tools will be implemented in later steps.
+`identity-service` is intended to become the central identity service for a
+portfolio of projects. It will own shared user identities while each project
+keeps its own access rules, roles, and project-specific associated
+information.
+
+The expected authentication model is stateful and session-based. Product
+authentication should rely on server-managed sessions that can be revoked and
+renewed over time. Stateless JWT authentication is not the intended primary
+product model for this service.
+
+The repository is still in the foundation phase. The current implementation
+focuses on the Fastify + TypeScript base, environment validation, Prisma
+setup, health checks, and quality tooling. Auth domain capabilities such as
+users, credentials, sessions, project roles, audit logs, OpenClaw admin
+operations, and MCP tools will be implemented in later steps.
+
+Near-term roadmap:
+
+- Central identity for multiple portfolio projects.
+- Project-specific authorization, roles, and related metadata.
+- Revocable and renewable session management.
+- External MCP/admin tooling to create and delete users, ban or unban them,
+  change their roles, and revoke or manage sessions through natural-language
+  workflows.
 
 ## Local setup
 
