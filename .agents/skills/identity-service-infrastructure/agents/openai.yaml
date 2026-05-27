@@ -1,0 +1,4 @@
+interface:
+  display_name: "Identity Service Infrastructure"
+  short_description: "Configure the Identity Service backend foundation."
+  default_prompt: "Use this skill when changing Identity Service infrastructure, tooling, scripts, Prisma, env, Docker, deploy, or hosting."
