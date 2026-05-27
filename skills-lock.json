@@ -6,6 +6,18 @@
       "sourceType": "github",
       "skillPath": "plugins/documentation-generation/skills/architecture-decision-records/SKILL.md",
       "computedHash": "73b129025ba53b5d672474492aa8d8803dde828cb8ac2bd5f2798b98d28a9147"
+    },
+    "fastify-best-practices": {
+      "source": "mcollina/skills",
+      "sourceType": "github",
+      "skillPath": "skills/fastify/SKILL.md",
+      "computedHash": "b3a771fa66bc5d8dac0af14e99e51fca2ff4a9add56f09d986778528bdf72c4c"
+    },
+    "vitest": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vitest/SKILL.md",
+      "computedHash": "0efd9cf8c56aada060d418d009cfe621a7915d0c73a958fe611985bc0c2fa4b8"
     }
   }
 }

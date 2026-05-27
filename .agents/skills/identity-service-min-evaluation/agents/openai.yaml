@@ -1,0 +1,4 @@
+interface:
+  display_name: "Identity Service Minimum Evaluation"
+  short_description: "Run the minimum local verification required before marking work complete."
+  default_prompt: "Use this skill when validating whether work in identity-service is ready to be marked complete and which local checks are required."
