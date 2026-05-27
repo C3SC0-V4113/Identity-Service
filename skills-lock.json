@@ -13,6 +13,12 @@
       "skillPath": "skills/fastify/SKILL.md",
       "computedHash": "b3a771fa66bc5d8dac0af14e99e51fca2ff4a9add56f09d986778528bdf72c4c"
     },
+    "postgresql-best-practices": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "postgresql-best-practices/SKILL.md",
+      "computedHash": "d32a9114bc974c965308108be7a41d9da4cddd037d5941b96611cce63064f7ea"
+    },
     "vitest": {
       "source": "antfu/skills",
       "sourceType": "github",
