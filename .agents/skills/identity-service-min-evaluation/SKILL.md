@@ -21,7 +21,7 @@ Run all of these commands when the change touches application code, shared code,
 ## Conditional scope
 
 - Run the full check set for changes in `src/`, `prisma/`, `package.json`, `package-lock.json`, `tsconfig.json`, `eslint.config.js`, `vitest.config.ts`, `.env.example`, `docker-compose.yml`, `.husky/`, or shared project tooling.
-- If the change is docs-only, do not invent unsupported commands. Skip runtime checks and report that code verification was not required for the changed scope and that runtime behavior remains unverified.
+- If the change is docs-only, run the relevant content linting through `npm run lint` and skip runtime checks like `typecheck`, `test`, and `build`. Report that runtime behavior remains unverified for the changed scope.
 - If a task is blocked and a required check cannot run, report the blocker instead of claiming completion.
 
 ## Failure reporting
