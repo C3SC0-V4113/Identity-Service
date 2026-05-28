@@ -13,7 +13,7 @@ export default defineConfig(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['eslint.config.js', 'vitest.config.ts'],
+          allowDefaultProject: ['eslint.config.js', 'prisma/seed.ts', 'vitest.config.ts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },

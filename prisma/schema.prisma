@@ -6,3 +6,132 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+model User {
+  id              String             @id @default(cuid())
+  email           String             @db.Text
+  emailNormalized String             @unique(map: "users_email_normalized_key") @map("email_normalized") @db.Text
+  displayName     String?            @map("display_name") @db.Text
+  status          UserStatus         @default(ACTIVE)
+  bannedAt        DateTime?          @map("banned_at") @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  localCredential LocalCredential?
+  sessions        Session[]
+  memberships     ProjectMembership[]
+
+  @@index([status], map: "users_status_idx")
+  @@map("users")
+}
+
+model LocalCredential {
+  id                String   @id @default(cuid())
+  userId            String   @unique(map: "local_credentials_user_id_key") @map("user_id")
+  passwordHash      String   @map("password_hash") @db.Text
+  passwordUpdatedAt DateTime @default(now()) @map("password_updated_at") @db.Timestamptz(3)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("local_credentials")
+}
+
+model Session {
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  secretHash    String        @unique(map: "sessions_secret_hash_key") @map("secret_hash") @db.Text
+  status        SessionStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt     DateTime      @map("expires_at") @db.Timestamptz(3)
+  lastSeenAt    DateTime?     @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt     DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  revokedReason String?       @map("revoked_reason") @db.Text
+  ipAddress     String?       @map("ip_address") @db.Text
+  userAgent     String?       @map("user_agent") @db.Text
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "sessions_user_id_idx")
+  @@index([status], map: "sessions_status_idx")
+  @@index([expiresAt], map: "sessions_expires_at_idx")
+  @@map("sessions")
+}
+
+model Project {
+  id          String              @id @default(cuid())
+  slug        String              @unique(map: "projects_slug_key") @db.Text
+  name        String              @db.Text
+  status      ProjectStatus       @default(ACTIVE)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  roles       ProjectRole[]
+  memberships ProjectMembership[]
+
+  @@map("projects")
+}
+
+model ProjectRole {
+  id              String                  @id @default(cuid())
+  projectId       String                  @map("project_id")
+  code            String                  @db.Text
+  name            String                  @db.Text
+  description     String?                 @db.Text
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  membershipRoles ProjectMembershipRole[]
+
+  @@unique([projectId, code], map: "project_roles_project_id_code_key")
+  @@index([projectId], map: "project_roles_project_id_idx")
+  @@map("project_roles")
+}
+
+model ProjectMembership {
+  id              String                  @id @default(cuid())
+  projectId       String                  @map("project_id")
+  userId          String                  @map("user_id")
+  status          MembershipStatus        @default(ACTIVE)
+  metadata        Json?
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membershipRoles ProjectMembershipRole[]
+
+  @@unique([projectId, userId], map: "project_memberships_project_id_user_id_key")
+  @@index([projectId], map: "project_memberships_project_id_idx")
+  @@index([userId], map: "project_memberships_user_id_idx")
+  @@map("project_memberships")
+}
+
+model ProjectMembershipRole {
+  membershipId String            @map("membership_id")
+  roleId       String            @map("role_id")
+  membership   ProjectMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  role         ProjectRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([membershipId, roleId])
+  @@index([roleId], map: "project_membership_roles_role_id_idx")
+  @@map("project_membership_roles")
+}

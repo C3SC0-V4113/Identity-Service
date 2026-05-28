@@ -18,6 +18,12 @@ setup, health checks, and quality tooling. Auth domain capabilities such as
 users, credentials, sessions, project roles, audit logs, OpenClaw admin
 operations, and MCP tools will be implemented in later steps.
 
+Current design references:
+
+- [ADR 0002: Adopt Session-Based Portfolio Identity](./docs/adrs/0002-adopt-session-based-portfolio-identity.md)
+- [ADR 0003: Define Initial Identity Data Model](./docs/adrs/0003-define-initial-identity-data-model.md)
+- [Database Model](./docs/database-model.md)
+
 Near-term roadmap:
 
 - Central identity for multiple portfolio projects.
