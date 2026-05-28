@@ -16,5 +16,7 @@ describe('GET /health', () => {
       status: 'ok',
       service: 'identity-service',
     });
+
+    await app.close();
   });
 });
