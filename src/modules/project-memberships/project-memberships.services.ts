@@ -10,16 +10,51 @@ import {
   findMembershipWithRolesByProjectAndUser,
   findProjectRolesByCodes,
   findUserByEmailNormalized,
+  listMembershipsByProject,
   replaceMembershipRoles,
 } from './project-memberships.repositories.js';
 import type {
   CreateProjectMembershipRequest,
+  ListProjectMembershipsQuery,
   ProjectAccessResponse,
+  ProjectMembershipListResponse,
   ProjectMembershipResponse,
   ReplaceProjectMembershipRolesRequest,
 } from './project-memberships.schemas.js';
 
 type PrismaDbClient = Parameters<typeof findProjectRolesByCodes>[0];
+
+const membershipListCursorSchema = {
+  parse(cursor: string) {
+    try {
+      const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+      const parsed = JSON.parse(decoded) as {
+        createdAt?: unknown;
+        id?: unknown;
+      };
+
+      if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') {
+        throw new Error('Invalid cursor payload');
+      }
+
+      const createdAt = new Date(parsed.createdAt);
+
+      if (Number.isNaN(createdAt.getTime()) || parsed.id.trim().length === 0) {
+        throw new Error('Invalid cursor payload');
+      }
+
+      return {
+        createdAt,
+        id: parsed.id,
+      };
+    } catch {
+      throw new AppError('Invalid pagination cursor', {
+        statusCode: 400,
+        code: 'PROJECT_MEMBERSHIP_CURSOR_INVALID',
+      });
+    }
+  },
+};
 
 export async function getProjectAccess(
   prisma: PrismaClient,
@@ -115,6 +150,60 @@ export async function createProjectMembership(
 
     throw error;
   }
+}
+
+export async function listProjectMemberships(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    query: ListProjectMembershipsQuery;
+  },
+): Promise<ProjectMembershipListResponse> {
+  const project = await requireProjectBySlug(prisma, input.projectSlug);
+  await requireProjectAdmin(prisma, project.id, input.actorUserId);
+
+  const queryText = input.query.q?.trim();
+  const records = await listMembershipsByProject(prisma, {
+    projectId: project.id,
+    limit: input.query.limit + 1,
+    status: input.query.status,
+    query:
+      queryText === undefined
+        ? undefined
+        : {
+            emailNormalized: queryText.toLowerCase(),
+            displayName: queryText,
+          },
+    cursor:
+      input.query.cursor === undefined
+        ? undefined
+        : membershipListCursorSchema.parse(input.query.cursor),
+  });
+
+  const hasMore = records.length > input.query.limit;
+  const pageItems = hasMore ? records.slice(0, input.query.limit) : records;
+  const lastItem = pageItems.at(-1);
+
+  return {
+    project,
+    items: pageItems.map((membership) => ({
+      membershipId: membership.id,
+      user: membership.user,
+      status: membership.status,
+      roles: membership.membershipRoles.map((membershipRole) => membershipRole.role),
+      createdAt: membership.createdAt.toISOString(),
+      updatedAt: membership.updatedAt.toISOString(),
+    })),
+    page: {
+      nextCursor:
+        hasMore && lastItem !== undefined
+          ? encodeMembershipListCursor(lastItem.createdAt, lastItem.id)
+          : null,
+      hasMore,
+      limit: input.query.limit,
+    },
+  };
 }
 
 export async function replaceProjectMembershipRoles(
@@ -215,4 +304,14 @@ function isMembershipConflictError(error: unknown): error is PrismaClientKnownRe
     error.meta.target.includes('project_id') &&
     error.meta.target.includes('user_id')
   );
+}
+
+function encodeMembershipListCursor(createdAt: Date, id: string): string {
+  return Buffer.from(
+    JSON.stringify({
+      createdAt: createdAt.toISOString(),
+      id,
+    }),
+    'utf8',
+  ).toString('base64url');
 }

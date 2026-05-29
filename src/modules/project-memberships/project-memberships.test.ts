@@ -5,6 +5,7 @@ import { authResponseSchema } from '../auth/auth.schemas.js';
 import { upsertProjectSeedData } from '../identity/bootstrap/project-seed.js';
 import {
   projectAccessResponseSchema,
+  projectMembershipListResponseSchema,
   projectMembershipResponseSchema,
 } from './project-memberships.schemas.js';
 
@@ -124,6 +125,544 @@ describe('project membership routes', () => {
       error: {
         code: 'PROJECT_NOT_FOUND',
         message: 'Project not found',
+      },
+    });
+  });
+
+  it('returns a stable membership list ordered by createdAt desc and id desc for project admins', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+      displayName: 'Admin',
+    });
+    const firstTarget = await registerUser({
+      email: 'first@example.com',
+      password: 'supersecret',
+      displayName: 'First',
+    });
+    const secondTarget = await registerUser({
+      email: 'second@example.com',
+      password: 'supersecret',
+      displayName: 'Second',
+    });
+    const thirdTarget = await registerUser({
+      email: 'third@example.com',
+      password: 'supersecret',
+      displayName: 'Third',
+    });
+
+    const adminMembership = await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const latestMembership = await createMembership({
+      userId: firstTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      createdAt: new Date('2026-01-03T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-03T00:00:00.000Z'),
+    });
+    const sameDateMembershipA = await createMembership({
+      userId: secondTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+    const sameDateMembershipB = await createMembership({
+      userId: thirdTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['pro'],
+      createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?limit=10',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+    const sameDateExpectedOrder = [sameDateMembershipA.id, sameDateMembershipB.id].sort().reverse();
+
+    expect(parsedResponse.project).toEqual({
+      id: expect.any(String),
+      slug: 'other-gpt',
+      name: 'Other GPT',
+    });
+    expect(parsedResponse.items.map((item) => item.membershipId)).toEqual([
+      latestMembership.id,
+      ...sameDateExpectedOrder,
+      adminMembership.id,
+    ]);
+    expect(parsedResponse.page).toEqual({
+      nextCursor: null,
+      hasMore: false,
+      limit: 10,
+    });
+  });
+
+  it('returns a cursor for the next page and uses it without repeating memberships', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const firstTarget = await registerUser({
+      email: 'first@example.com',
+      password: 'supersecret',
+    });
+    const secondTarget = await registerUser({
+      email: 'second@example.com',
+      password: 'supersecret',
+    });
+    const thirdTarget = await registerUser({
+      email: 'third@example.com',
+      password: 'supersecret',
+    });
+
+    const adminMembership = await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const firstMembership = await createMembership({
+      userId: firstTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      createdAt: new Date('2026-01-04T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-04T00:00:00.000Z'),
+    });
+    const secondMembership = await createMembership({
+      userId: secondTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      createdAt: new Date('2026-01-03T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-03T00:00:00.000Z'),
+    });
+    const thirdMembership = await createMembership({
+      userId: thirdTarget.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+
+    const firstPageResponse = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?limit=2',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(firstPageResponse.statusCode).toBe(200);
+
+    const firstPage = projectMembershipListResponseSchema.parse(firstPageResponse.json());
+
+    expect(firstPage.items.map((item) => item.membershipId)).toEqual([
+      firstMembership.id,
+      secondMembership.id,
+    ]);
+    expect(firstPage.page.hasMore).toBe(true);
+    expect(firstPage.page.nextCursor).toEqual(expect.any(String));
+
+    const secondPageResponse = await app.inject({
+      method: 'GET',
+      url: `/projects/other-gpt/memberships?limit=2&cursor=${encodeURIComponent(firstPage.page.nextCursor ?? '')}`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(secondPageResponse.statusCode).toBe(200);
+
+    const secondPage = projectMembershipListResponseSchema.parse(secondPageResponse.json());
+
+    expect(secondPage.items.map((item) => item.membershipId)).toEqual([
+      thirdMembership.id,
+      adminMembership.id,
+    ]);
+    expect(secondPage.page).toEqual({
+      nextCursor: null,
+      hasMore: false,
+      limit: 2,
+    });
+  });
+
+  it('filters memberships by status', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const suspendedUser = await registerUser({
+      email: 'suspended@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'active@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    const suspendedMembership = await createMembership({
+      userId: suspendedUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+
+    await createMembership({
+      userId: (
+        await app.prisma.user.findUniqueOrThrow({
+          where: {
+            emailNormalized: 'active@example.com',
+          },
+          select: {
+            id: true,
+          },
+        })
+      ).id,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?status=SUSPENDED',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+
+    expect(parsedResponse.items).toHaveLength(1);
+    expect(parsedResponse.items[0]).toMatchObject({
+      membershipId: suspendedMembership.id,
+      status: 'SUSPENDED',
+      user: {
+        email: 'suspended@example.com',
+      },
+    });
+  });
+
+  it('filters memberships by email query', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'alice@example.com',
+      password: 'supersecret',
+      displayName: 'Alice',
+    });
+    await registerUser({
+      email: 'bob@example.com',
+      password: 'supersecret',
+      displayName: 'Bob',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembershipForEmail('alice@example.com', 'other-gpt', ['user']);
+    await createMembershipForEmail('bob@example.com', 'other-gpt', ['user']);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?q=ALICE',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+
+    expect(parsedResponse.items).toHaveLength(1);
+    expect(parsedResponse.items[0]?.user.email).toBe('alice@example.com');
+  });
+
+  it('filters memberships by displayName query', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'alice@example.com',
+      password: 'supersecret',
+      displayName: 'Alice Wonderland',
+    });
+    await registerUser({
+      email: 'bob@example.com',
+      password: 'supersecret',
+      displayName: 'Bob Builder',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembershipForEmail('alice@example.com', 'other-gpt', ['user']);
+    await createMembershipForEmail('bob@example.com', 'other-gpt', ['user']);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?q=wonder',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+
+    expect(parsedResponse.items).toHaveLength(1);
+    expect(parsedResponse.items[0]?.user.displayName).toBe('Alice Wonderland');
+  });
+
+  it('combines status and search filters', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'alice@example.com',
+      password: 'supersecret',
+      displayName: 'Alice Cooper',
+    });
+    await registerUser({
+      email: 'alice-active@example.com',
+      password: 'supersecret',
+      displayName: 'Alice Active',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    const suspendedMembership = await createMembership({
+      userId: await getUserIdByEmail('alice@example.com'),
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+    await createMembership({
+      userId: await getUserIdByEmail('alice-active@example.com'),
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?status=SUSPENDED&q=alice',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+
+    expect(parsedResponse.items).toHaveLength(1);
+    expect(parsedResponse.items[0]).toMatchObject({
+      membershipId: suspendedMembership.id,
+      status: 'SUSPENDED',
+      user: {
+        email: 'alice@example.com',
+      },
+    });
+  });
+
+  it('returns an empty list when no memberships match the filters', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembershipForEmail('person@example.com', 'other-gpt', ['user']);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?status=REVOKED&q=missing',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectMembershipListResponseSchema.parse(response.json());
+
+    expect(parsedResponse.items).toEqual([]);
+    expect(parsedResponse.page).toEqual({
+      nextCursor: null,
+      hasMore: false,
+      limit: 20,
+    });
+  });
+
+  it('rejects membership listing when the caller is not a project admin', async () => {
+    const caller = await registerUser({
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships',
+      headers: {
+        cookie: caller.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_ADMIN_REQUIRED',
+        message: 'Project admin role required',
+      },
+    });
+  });
+
+  it('keeps membership listing authorization scoped to the target project', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/cost-console/memberships',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_ADMIN_REQUIRED',
+        message: 'Project admin role required',
+      },
+    });
+  });
+
+  it('returns 404 for membership listing when the project does not exist', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/unknown/memberships',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_NOT_FOUND',
+        message: 'Project not found',
+      },
+    });
+  });
+
+  it('returns 400 when the membership list limit is out of range', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?limit=0',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+      },
+    });
+  });
+
+  it('returns 400 when the membership list cursor is invalid', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/memberships?cursor=not-a-valid-cursor',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_MEMBERSHIP_CURSOR_INVALID',
+        message: 'Invalid pagination cursor',
       },
     });
   });
@@ -512,6 +1051,9 @@ describe('project membership routes', () => {
     userId: string;
     projectSlug: string;
     roleCodes: string[];
+    status?: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+    createdAt?: Date;
+    updatedAt?: Date;
   }) {
     const project = await app.prisma.project.findUniqueOrThrow({
       where: {
@@ -528,7 +1070,7 @@ describe('project membership routes', () => {
       },
     });
 
-    return app.prisma.projectMembership.create({
+    const membership = await app.prisma.projectMembership.create({
       data: {
         userId: input.userId,
         projectId: project.id,
@@ -539,6 +1081,56 @@ describe('project membership routes', () => {
         },
       },
     });
+
+    if (
+      input.status === undefined &&
+      input.createdAt === undefined &&
+      input.updatedAt === undefined
+    ) {
+      return membership;
+    }
+
+    return app.prisma.projectMembership.update({
+      where: {
+        id: membership.id,
+      },
+      data: {
+        status: input.status,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      },
+    });
+  }
+
+  async function createMembershipForEmail(
+    email: string,
+    projectSlug: string,
+    roleCodes: string[],
+    overrides?: {
+      status?: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+      createdAt?: Date;
+      updatedAt?: Date;
+    },
+  ) {
+    return createMembership({
+      userId: await getUserIdByEmail(email),
+      projectSlug,
+      roleCodes,
+      ...overrides,
+    });
+  }
+
+  async function getUserIdByEmail(email: string) {
+    const user = await app.prisma.user.findUniqueOrThrow({
+      where: {
+        emailNormalized: email.toLowerCase(),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return user.id;
   }
 });
 

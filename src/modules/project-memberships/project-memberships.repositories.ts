@@ -47,6 +47,32 @@ const membershipWithRolesSelect = {
   },
 } satisfies Prisma.ProjectMembershipSelect;
 
+const membershipListSelect = {
+  id: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  user: {
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+    },
+  },
+  membershipRoles: {
+    orderBy: {
+      role: {
+        code: 'asc',
+      },
+    },
+    select: {
+      role: {
+        select: projectRoleSummarySelect,
+      },
+    },
+  },
+} satisfies Prisma.ProjectMembershipSelect;
+
 export async function findProjectBySlug(prisma: PrismaDbClient, slug: string) {
   return prisma.project.findUnique({
     where: {
@@ -109,6 +135,74 @@ export async function findMembershipWithRolesByProjectAndUser(
       },
     },
     select: membershipWithRolesSelect,
+  });
+}
+
+export async function listMembershipsByProject(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    limit: number;
+    status?: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+    query?: {
+      emailNormalized: string;
+      displayName: string;
+    };
+    cursor?: {
+      createdAt: Date;
+      id: string;
+    };
+  },
+) {
+  const where: Prisma.ProjectMembershipWhereInput = {
+    projectId: input.projectId,
+  };
+
+  if (input.status !== undefined) {
+    where.status = input.status;
+  }
+
+  if (input.query !== undefined) {
+    where.user = {
+      is: {
+        OR: [
+          {
+            emailNormalized: {
+              contains: input.query.emailNormalized,
+            },
+          },
+          {
+            displayName: {
+              contains: input.query.displayName,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  if (input.cursor !== undefined) {
+    where.OR = [
+      {
+        createdAt: {
+          lt: input.cursor.createdAt,
+        },
+      },
+      {
+        createdAt: input.cursor.createdAt,
+        id: {
+          lt: input.cursor.id,
+        },
+      },
+    ];
+  }
+
+  return prisma.projectMembership.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: input.limit,
+    select: membershipListSelect,
   });
 }
 
