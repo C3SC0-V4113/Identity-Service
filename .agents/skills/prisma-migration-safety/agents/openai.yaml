@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Prisma Migration Safety'
+  short_description: 'Guardrails for safe Prisma migrations in identity-service.'
+  default_prompt: 'Use this skill when planning or executing Prisma schema and migration changes in identity-service, especially when reset, drift, backfills, or backups may be involved.'
