@@ -23,15 +23,15 @@ Current design references:
 - [ADR 0002: Adopt Session-Based Portfolio Identity](./docs/adrs/0002-adopt-session-based-portfolio-identity.md)
 - [ADR 0003: Define Initial Identity Data Model](./docs/adrs/0003-define-initial-identity-data-model.md)
 - [Database Model](./docs/database-model.md)
+- [Checkpoints](./docs/checkpoints.md)
 
-Near-term roadmap:
+Current implementation highlights:
 
-- Central identity for multiple portfolio projects.
-- Project-specific authorization, roles, and related metadata.
-- Revocable and renewable session management.
-- External MCP/admin tooling to create and delete users, ban or unban them,
-  change their roles, and revoke or manage sessions through natural-language
-  workflows.
+- Stateful auth endpoints for register, login, logout, and session-backed
+  profile introspection.
+- Project role seeds for `other-gpt` and `cost-console`.
+- Project-scoped access introspection with `GET /projects/:slug/me`.
+- Admin-only membership admission and role replacement within a project.
 
 ## Local setup
 
@@ -55,7 +55,19 @@ Near-term roadmap:
    npm run db:migrate
    ```
 
-5. Start the API:
+5. Seed the project and role bootstrap data:
+
+   ```powershell
+   npm run db:seed
+   ```
+
+6. Bootstrap the first project admin after the user exists:
+
+   ```powershell
+   npm run db:bootstrap-admin -- --email admin@example.com --all-projects
+   ```
+
+7. Start the API:
 
    ```powershell
    npm run dev

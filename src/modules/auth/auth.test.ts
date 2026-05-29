@@ -1,5 +1,5 @@
 import argon2 from 'argon2';
-import { UserStatus } from '@prisma/client';
+import { UserStatus } from '../../shared/db/prisma-types.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../../app.js';
@@ -240,7 +240,7 @@ describe('auth routes', () => {
         userId,
         projectId: project.id,
         membershipRoles: {
-          create: project.roles.map((role) => ({
+          create: project.roles.map((role: (typeof project.roles)[number]) => ({
             roleId: role.id,
           })),
         },

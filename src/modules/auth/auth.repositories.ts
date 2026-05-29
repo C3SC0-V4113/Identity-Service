@@ -1,6 +1,10 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../../shared/db/prisma-types.js';
 
-type PrismaDbClient = PrismaClient | Prisma.TransactionClient;
+type PrismaDbClient = {
+  user: PrismaClient['user'];
+  localCredential: PrismaClient['localCredential'];
+  session: PrismaClient['session'];
+};
 
 type UserProfileRecord = Awaited<ReturnType<typeof findUserProfileById>>;
 type SessionRecord = Awaited<ReturnType<typeof findSessionBySecretHash>>;

@@ -19,6 +19,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
+    "db:bootstrap-admin": "tsx prisma/bootstrap-project-admin.ts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -34,9 +35,11 @@
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "^10.3.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "argon2": "^0.44.0",
     "fastify": "^5.8.5",
+    "pg": "^8.21.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {

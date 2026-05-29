@@ -1,9 +1,12 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
-import { ProjectStatus } from '@prisma/client';
+import type { PrismaClient } from '../../../shared/db/prisma-types.js';
+import { ProjectStatus } from '../../../shared/db/prisma-types.js';
 
 import { seedProjects } from './project-seed-data.js';
 
-type PrismaDbClient = PrismaClient | Prisma.TransactionClient;
+type PrismaDbClient = {
+  project: PrismaClient['project'];
+  projectRole: PrismaClient['projectRole'];
+};
 
 export async function upsertProjectSeedData(prisma: PrismaDbClient): Promise<void> {
   for (const projectDefinition of seedProjects) {

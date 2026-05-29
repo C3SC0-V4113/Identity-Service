@@ -1,13 +1,8 @@
 import type { FastifyPluginCallback } from 'fastify';
 
+import { getSessionTokenFromCookie } from '../../shared/auth/session-auth.js';
 import { authResponseSchema, loginRequestSchema, registerRequestSchema } from './auth.schemas.js';
-import {
-  getAuthenticatedUser,
-  getSessionTokenFromCookie,
-  loginUser,
-  logoutUser,
-  registerUser,
-} from './auth.services.js';
+import { getAuthenticatedUser, loginUser, logoutUser, registerUser } from './auth.services.js';
 import { getSessionCookieName, getSessionCookieOptions } from './auth.cookies.js';
 
 export const authRoutes: FastifyPluginCallback = (app, _options, done) => {

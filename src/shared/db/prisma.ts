@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+
+import { createPrismaClient } from './prisma-client.js';
 
 export function registerPrisma(app: FastifyInstance): void {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
 
   app.decorate('prisma', prisma);
 

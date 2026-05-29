@@ -1,4 +1,4 @@
-import type { PrismaClient, Session, User } from '@prisma/client';
+import type { PrismaClient, Session, User } from '../db/prisma-types.js';
 
 declare module 'fastify' {
   interface FastifyInstance {

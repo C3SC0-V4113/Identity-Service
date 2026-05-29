@@ -1,10 +1,12 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import argon2 from 'argon2';
-import type { PrismaClient } from '@prisma/client';
-import { UserStatus } from '@prisma/client';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import type { PrismaClient } from '../../shared/db/prisma-types.js';
+import { UserStatus } from '../../shared/db/prisma-types.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
+import { normalizeEmail } from '../../shared/auth/email.js';
+import { hashSessionToken, requireAuthenticatedSession } from '../../shared/auth/session-auth.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import {
   createSession,
@@ -56,7 +58,13 @@ export async function registerUser(
   const sessionSecretHash = hashSessionToken(sessionToken);
 
   try {
-    const createdUser = await prisma.$transaction(async (tx) => {
+    const createdUser = await prisma.$transaction(async (transactionClient: unknown) => {
+      const tx = transactionClient as unknown as {
+        user: PrismaClient['user'];
+        localCredential: PrismaClient['localCredential'];
+        session: PrismaClient['session'];
+      };
+
       const user = await createUserWithCredential(tx, {
         email,
         emailNormalized,
@@ -126,7 +134,13 @@ export async function loginUser(
   const sessionSecretHash = hashSessionToken(sessionToken);
   const expiresAt = getSessionExpiresAt(new Date());
 
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (transactionClient: unknown) => {
+    const tx = transactionClient as unknown as {
+      user: PrismaClient['user'];
+      localCredential: PrismaClient['localCredential'];
+      session: PrismaClient['session'];
+    };
+
     await createSession(tx, {
       userId: user.id,
       secretHash: sessionSecretHash,
@@ -201,58 +215,8 @@ export async function getAuthenticatedUser(
     user: mapUserResponse(profile),
   };
 }
-
-export function getSessionTokenFromCookie(
-  cookies: Record<string, string | undefined>,
-  cookieName: string,
-): string | null {
-  return cookies[cookieName] ?? null;
-}
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 function generateSessionToken(): string {
   return randomBytes(sessionTokenBytes).toString('base64url');
-}
-
-function hashSessionToken(sessionToken: string): string {
-  return createHash('sha256').update(sessionToken).digest('hex');
-}
-
-async function requireAuthenticatedSession(prisma: PrismaClient, sessionToken: string | null) {
-  if (sessionToken === null) {
-    throw unauthenticatedError();
-  }
-
-  const sessionSecretHash = hashSessionToken(sessionToken);
-  const session = await findSessionBySecretHash(prisma, sessionSecretHash);
-
-  if (session === null) {
-    throw unauthenticatedError();
-  }
-
-  if (session.status === 'REVOKED') {
-    throw unauthenticatedError();
-  }
-
-  if (session.expiresAt.getTime() <= Date.now()) {
-    if (session.status === 'ACTIVE') {
-      await markSessionExpired(prisma, session.id);
-    }
-
-    throw unauthenticatedError();
-  }
-
-  if (session.user.status === UserStatus.BANNED) {
-    throw bannedUserError();
-  }
-
-  return {
-    session,
-    user: session.user,
-  };
 }
 
 function mapUserResponse(profile: AuthUserProfileRecord): AuthUserResponse {
@@ -262,12 +226,18 @@ function mapUserResponse(profile: AuthUserProfileRecord): AuthUserResponse {
     displayName: profile.displayName,
     status: profile.status,
     createdAt: profile.createdAt.toISOString(),
-    memberships: profile.memberships.map((membership) => ({
-      id: membership.id,
-      status: membership.status,
-      project: membership.project,
-      roles: membership.membershipRoles.map((membershipRole) => membershipRole.role),
-    })),
+    memberships: profile.memberships.map(
+      (membership: AuthUserProfileRecord['memberships'][number]) => ({
+        id: membership.id,
+        status: membership.status,
+        project: membership.project,
+        roles: membership.membershipRoles.map(
+          (
+            membershipRole: AuthUserProfileRecord['memberships'][number]['membershipRoles'][number],
+          ) => membershipRole.role,
+        ),
+      }),
+    ),
   };
 }
 
@@ -278,13 +248,6 @@ function invalidCredentialsError(): AppError {
   });
 }
 
-function unauthenticatedError(): AppError {
-  return new AppError('Authentication required', {
-    statusCode: 401,
-    code: 'AUTHENTICATION_REQUIRED',
-  });
-}
-
 function bannedUserError(): AppError {
   return new AppError('User is banned', {
     statusCode: 403,
@@ -292,7 +255,7 @@ function bannedUserError(): AppError {
   });
 }
 
-function isEmailConflictError(error: unknown): boolean {
+function isEmailConflictError(error: unknown): error is PrismaClientKnownRequestError {
   return (
     error instanceof PrismaClientKnownRequestError &&
     error.code === 'P2002' &&

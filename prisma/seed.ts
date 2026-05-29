@@ -1,8 +1,7 @@
-import { PrismaClient } from '@prisma/client';
-
 import { upsertProjectSeedData } from '../src/modules/identity/bootstrap/project-seed.js';
+import { createPrismaClient } from '../src/shared/db/prisma-client.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 async function seed() {
   await upsertProjectSeedData(prisma);
