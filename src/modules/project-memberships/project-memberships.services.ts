@@ -5,6 +5,7 @@ import { normalizeEmail } from '../../shared/auth/email.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { requireProjectAdmin, requireProjectBySlug } from './project-memberships.guards.js';
 import {
+  createProjectMembershipAuditLog,
   countOtherActiveAdminMemberships,
   createMembershipWithRoles,
   findMembershipByProjectAndUser,
@@ -25,6 +26,24 @@ import type {
 } from './project-memberships.schemas.js';
 
 type PrismaDbClient = Parameters<typeof findProjectRolesByCodes>[0];
+type ProjectMembershipAuditAction =
+  | 'CREATED'
+  | 'ROLES_REPLACED'
+  | 'SUSPENDED'
+  | 'REACTIVATED'
+  | 'REVOKED';
+type ProjectMembershipRolesRecord = {
+  id: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+  user: {
+    id: string;
+  };
+  membershipRoles: Array<{
+    role: {
+      code: string;
+    };
+  }>;
+};
 
 const membershipListCursorSchema = {
   parse(cursor: string) {
@@ -135,10 +154,23 @@ export async function createProjectMembership(
   const roles = await resolveProjectRolesOrThrow(prisma, project.id, input.body.roleCodes);
 
   try {
-    const membership = await createMembershipWithRoles(prisma, {
-      projectId: project.id,
-      userId: user.id,
-      roleIds: roles.map((role: (typeof roles)[number]) => role.id),
+    const membership = await prisma.$transaction(async (transactionClient: unknown) => {
+      const tx = transactionClient as unknown as PrismaDbClient;
+      const createdMembership = await createMembershipWithRoles(tx, {
+        projectId: project.id,
+        userId: user.id,
+        roleIds: roles.map((role: (typeof roles)[number]) => role.id),
+      });
+
+      await recordProjectMembershipAuditLog(tx, {
+        action: 'CREATED',
+        actorUserId: input.actorUserId,
+        projectId: project.id,
+        beforeMembership: null,
+        afterMembership: createdMembership,
+      });
+
+      return createdMembership;
     });
 
     return mapProjectMembershipResponse(membership);
@@ -251,10 +283,20 @@ export async function replaceProjectMembershipRoles(
       nextRoleCodes: roles.map((role: (typeof roles)[number]) => role.code),
     });
 
-    return replaceMembershipRoles(tx, {
+    const updatedMembership = await replaceMembershipRoles(tx, {
       membershipId: membership.id,
       roleIds: roles.map((role: (typeof roles)[number]) => role.id),
     });
+
+    await recordProjectMembershipAuditLog(tx, {
+      action: 'ROLES_REPLACED',
+      actorUserId: input.actorUserId,
+      projectId: project.id,
+      beforeMembership: targetMembership,
+      afterMembership: updatedMembership,
+    });
+
+    return updatedMembership;
   });
 
   return mapProjectMembershipResponse(updatedMembership);
@@ -273,6 +315,7 @@ export async function suspendProjectMembership(
     projectSlug: input.projectSlug,
     targetUserId: input.targetUserId,
     action: 'suspend',
+    auditAction: 'SUSPENDED',
     nextStatus: 'SUSPENDED',
     allowedCurrentStatuses: ['ACTIVE'],
   });
@@ -291,6 +334,7 @@ export async function reactivateProjectMembership(
     projectSlug: input.projectSlug,
     targetUserId: input.targetUserId,
     action: 'reactivate',
+    auditAction: 'REACTIVATED',
     nextStatus: 'ACTIVE',
     allowedCurrentStatuses: ['SUSPENDED'],
   });
@@ -309,6 +353,7 @@ export async function revokeProjectMembership(
     projectSlug: input.projectSlug,
     targetUserId: input.targetUserId,
     action: 'revoke',
+    auditAction: 'REVOKED',
     nextStatus: 'REVOKED',
     allowedCurrentStatuses: ['ACTIVE', 'SUSPENDED'],
   });
@@ -377,6 +422,7 @@ async function transitionProjectMembershipStatus(
     projectSlug: string;
     targetUserId: string;
     action: 'suspend' | 'reactivate' | 'revoke';
+    auditAction: ProjectMembershipAuditAction;
     nextStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
     allowedCurrentStatuses: Array<'ACTIVE' | 'SUSPENDED' | 'REVOKED'>;
   },
@@ -411,10 +457,20 @@ async function transitionProjectMembershipStatus(
       nextStatus: input.nextStatus,
     });
 
-    return updateMembershipStatus(tx, {
+    const updatedMembership = await updateMembershipStatus(tx, {
       membershipId: membership.id,
       status: input.nextStatus,
     });
+
+    await recordProjectMembershipAuditLog(tx, {
+      action: input.auditAction,
+      actorUserId: input.actorUserId,
+      projectId: project.id,
+      beforeMembership: membership,
+      afterMembership: updatedMembership,
+    });
+
+    return updatedMembership;
   });
 
   return mapProjectMembershipResponse(updatedMembership);
@@ -525,6 +581,36 @@ function isMembershipConflictError(error: unknown): error is PrismaClientKnownRe
     error.meta.target.includes('project_id') &&
     error.meta.target.includes('user_id')
   );
+}
+
+async function recordProjectMembershipAuditLog(
+  prisma: PrismaDbClient,
+  input: {
+    action: ProjectMembershipAuditAction;
+    actorUserId: string;
+    projectId: string;
+    beforeMembership: ProjectMembershipRolesRecord | null;
+    afterMembership: ProjectMembershipRolesRecord;
+  },
+) {
+  await createProjectMembershipAuditLog(prisma, {
+    action: input.action,
+    projectId: input.projectId,
+    membershipId: input.afterMembership.id,
+    actorUserId: input.actorUserId,
+    targetUserId: input.afterMembership.user.id,
+    fromStatus: input.beforeMembership?.status ?? null,
+    toStatus: input.afterMembership.status,
+    fromRoleCodes:
+      input.beforeMembership === null ? [] : getMembershipRoleCodes(input.beforeMembership),
+    toRoleCodes: getMembershipRoleCodes(input.afterMembership),
+  });
+}
+
+function getMembershipRoleCodes(membership: ProjectMembershipRolesRecord) {
+  return membership.membershipRoles
+    .map((membershipRole) => membershipRole.role.code)
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function encodeMembershipListCursor(createdAt: Date, id: string): string {

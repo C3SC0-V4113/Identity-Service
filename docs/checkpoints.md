@@ -13,6 +13,8 @@
   `cost-console` with roles `user`, `admin`.
 - Project memberships support multiple roles per membership through
   `ProjectMembershipRole`.
+- Project membership audit logs persist structured diffs for successful
+  administrative HTTP mutations.
 - Project-scoped authorization endpoints are available:
   `GET /projects/:slug/me`,
   `GET /projects/:slug/memberships`,
@@ -34,26 +36,26 @@
 - Project-scoped access introspection and admin-only membership management.
 - Admin-only project member listing with pagination and filtering.
 - Membership lifecycle operations and project-disable gating.
+- Internal audit logging for project membership mutations.
 
 ## Current slice
 
-- Slice: Membership lifecycle + project-disable gating.
+- Slice: Project membership audit logging.
 - Status: implemented.
 - Scope delivered:
-  `GET /projects/:slug/memberships` for admin listing with cursor pagination
-  and filters,
-  `POST /projects/:slug/memberships/:userId/suspend`,
-  `POST /projects/:slug/memberships/:userId/reactivate`,
-  `POST /projects/:slug/memberships/:userId/revoke`,
-  project-scoped HTTP gating when `Project.status = DISABLED`,
-  and last-active-admin protection for lifecycle and role replacement flows.
+  immutable audit rows for successful `create`, `roles replace`, `suspend`,
+  `reactivate`, and `revoke` membership mutations,
+  structured before/after diffs for membership status and role codes,
+  and transactional audit persistence coupled to the underlying membership
+  mutation.
 - Shared auth extraction completed through `src/shared/auth/session-auth.ts`
   so future modules can reuse authenticated-session guards without importing
   `auth.services`.
 
 ## Next slices
 
-- Introduce audit logging for project membership changes.
+- Expose membership audit history through a project-admin read API when a
+  concrete UX or operator flow is defined.
 - Define admin UX or operational tooling beyond local bootstrap scripts.
 - Decide whether revoked memberships should eventually support first-class
   readmission through HTTP or a future operational flow.
@@ -76,6 +78,8 @@
   lifecycle operations or role replacement.
 - Membership revocation is terminal in the current HTTP surface. Revoked
   memberships are not reactivated or readmitted through the API yet.
+- Membership audit logging persists only successful administrative HTTP
+  mutations and does not yet expose a read API or `reason` field.
 
 ## Operational notes
 
@@ -107,5 +111,7 @@
 
 - Should membership metadata get a first-class contract soon, or remain opaque
   until an explicit use case appears?
+- Should membership audit history get a first-class admin read API soon, or
+  remain internal until a concrete operator flow appears?
 - Should the service eventually support a first-class readmission flow for
   revoked memberships, or keep revocation permanently terminal?

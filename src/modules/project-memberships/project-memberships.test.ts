@@ -688,7 +688,7 @@ describe('project membership routes', () => {
       projectSlug: 'other-gpt',
       roleCodes: ['admin'],
     });
-    await createMembership({
+    const targetMembership = await createMembership({
       userId: targetUser.userId,
       projectSlug: 'other-gpt',
       roleCodes: ['user'],
@@ -703,7 +703,9 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toMatchObject({
       membershipId: expect.any(String),
       status: 'SUSPENDED',
       user: {
@@ -711,6 +713,22 @@ describe('project membership routes', () => {
         email: 'target@example.com',
       },
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: targetMembership.id,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'SUSPENDED',
+        actorUserId: primaryAdmin.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: 'ACTIVE',
+        toStatus: 'SUSPENDED',
+        fromRoleCodes: ['user'],
+        toRoleCodes: ['user'],
+      }),
+    ]);
   });
 
   it('reactivates a suspended membership back to active', async () => {
@@ -728,7 +746,7 @@ describe('project membership routes', () => {
       projectSlug: 'other-gpt',
       roleCodes: ['admin'],
     });
-    await createMembership({
+    const targetMembership = await createMembership({
       userId: targetUser.userId,
       projectSlug: 'other-gpt',
       roleCodes: ['user'],
@@ -744,13 +762,31 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toMatchObject({
       membershipId: expect.any(String),
       status: 'ACTIVE',
       user: {
         id: targetUser.userId,
       },
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: targetMembership.id,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'REACTIVATED',
+        actorUserId: adminUser.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: 'SUSPENDED',
+        toStatus: 'ACTIVE',
+        fromRoleCodes: ['user'],
+        toRoleCodes: ['user'],
+      }),
+    ]);
   });
 
   it('revokes an active membership', async () => {
@@ -768,7 +804,7 @@ describe('project membership routes', () => {
       projectSlug: 'other-gpt',
       roleCodes: ['admin'],
     });
-    await createMembership({
+    const targetMembership = await createMembership({
       userId: targetUser.userId,
       projectSlug: 'other-gpt',
       roleCodes: ['user'],
@@ -783,13 +819,31 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toMatchObject({
       membershipId: expect.any(String),
       status: 'REVOKED',
       user: {
         id: targetUser.userId,
       },
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: targetMembership.id,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'REVOKED',
+        actorUserId: adminUser.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: 'ACTIVE',
+        toStatus: 'REVOKED',
+        fromRoleCodes: ['user'],
+        toRoleCodes: ['user'],
+      }),
+    ]);
   });
 
   it('revokes a suspended membership', async () => {
@@ -807,7 +861,7 @@ describe('project membership routes', () => {
       projectSlug: 'other-gpt',
       roleCodes: ['admin'],
     });
-    await createMembership({
+    const targetMembership = await createMembership({
       userId: targetUser.userId,
       projectSlug: 'other-gpt',
       roleCodes: ['user'],
@@ -823,13 +877,31 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toMatchObject({
       membershipId: expect.any(String),
       status: 'REVOKED',
       user: {
         id: targetUser.userId,
       },
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: targetMembership.id,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'REVOKED',
+        actorUserId: adminUser.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: 'SUSPENDED',
+        toStatus: 'REVOKED',
+        fromRoleCodes: ['user'],
+        toRoleCodes: ['user'],
+      }),
+    ]);
   });
 
   it('rejects reactivation for a revoked membership', async () => {
@@ -869,6 +941,12 @@ describe('project membership routes', () => {
         message: 'Cannot reactivate membership from REVOKED status',
       },
     });
+
+    expect(
+      await listProjectMembershipAuditLogs({
+        targetUserId: targetUser.userId,
+      }),
+    ).toEqual([]);
   });
 
   it('rejects suspension for a suspended membership', async () => {
@@ -1019,6 +1097,12 @@ describe('project membership routes', () => {
         message: 'At least one active project admin is required',
       },
     });
+
+    expect(
+      await listProjectMembershipAuditLogs({
+        targetUserId: adminUser.userId,
+      }),
+    ).toEqual([]);
   });
 
   it('prevents revoking the last active admin in a project', async () => {
@@ -1207,6 +1291,12 @@ describe('project membership routes', () => {
         },
       });
     }
+
+    expect(
+      await listProjectMembershipAuditLogs({
+        targetUserId: targetUser.userId,
+      }),
+    ).toEqual([]);
   });
 
   it('keeps auth me unchanged when a project is disabled', async () => {
@@ -1255,6 +1345,78 @@ describe('project membership routes', () => {
     });
   });
 
+  it('persists structured membership audit rows in createdAt order', async () => {
+    const actorUser = await registerUser({
+      email: 'actor@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+    const project = await app.prisma.project.findUniqueOrThrow({
+      where: {
+        slug: 'other-gpt',
+      },
+      select: {
+        id: true,
+      },
+    });
+    const membership = await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    await app.prisma.projectMembershipAuditLog.createMany({
+      data: [
+        {
+          action: 'CREATED',
+          projectId: project.id,
+          membershipId: membership.id,
+          actorUserId: actorUser.userId,
+          targetUserId: targetUser.userId,
+          fromStatus: null,
+          toStatus: 'ACTIVE',
+          fromRoleCodes: [],
+          toRoleCodes: ['user'],
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+        {
+          action: 'ROLES_REPLACED',
+          projectId: project.id,
+          membershipId: membership.id,
+          actorUserId: actorUser.userId,
+          targetUserId: targetUser.userId,
+          fromStatus: 'ACTIVE',
+          toStatus: 'ACTIVE',
+          fromRoleCodes: ['user'],
+          toRoleCodes: ['admin'],
+          createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: membership.id,
+    });
+
+    expect(auditLogs).toHaveLength(2);
+    expect(auditLogs.map((auditLog) => auditLog.action)).toEqual(['CREATED', 'ROLES_REPLACED']);
+    expect(auditLogs[0]).toMatchObject({
+      fromStatus: null,
+      toStatus: 'ACTIVE',
+      fromRoleCodes: [],
+      toRoleCodes: ['user'],
+    });
+    expect(auditLogs[1]).toMatchObject({
+      fromStatus: 'ACTIVE',
+      toStatus: 'ACTIVE',
+      fromRoleCodes: ['user'],
+      toRoleCodes: ['admin'],
+    });
+  });
+
   it('creates a project membership with valid project roles', async () => {
     const adminUser = await registerUser({
       email: 'admin@example.com',
@@ -1285,7 +1447,9 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(201);
-    expect(projectMembershipResponseSchema.parse(response.json())).toEqual({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toEqual({
       membershipId: expect.any(String),
       user: {
         id: targetUser.userId,
@@ -1311,6 +1475,22 @@ describe('project membership routes', () => {
         },
       ],
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: parsedResponse.membershipId,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'CREATED',
+        actorUserId: adminUser.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: null,
+        toStatus: 'ACTIVE',
+        fromRoleCodes: [],
+        toRoleCodes: ['pro', 'user'],
+      }),
+    ]);
   });
 
   it('rejects membership creation when the caller is not a project admin', async () => {
@@ -1417,6 +1597,12 @@ describe('project membership routes', () => {
         message: 'Project membership already exists',
       },
     });
+
+    expect(
+      await listProjectMembershipAuditLogs({
+        targetUserId: targetUser.userId,
+      }),
+    ).toEqual([]);
   });
 
   it('replaces the complete set of project roles for a membership', async () => {
@@ -1434,7 +1620,7 @@ describe('project membership routes', () => {
       projectSlug: 'other-gpt',
       roleCodes: ['admin'],
     });
-    await createMembership({
+    const targetMembership = await createMembership({
       userId: targetUser.userId,
       projectSlug: 'other-gpt',
       roleCodes: ['user', 'pro'],
@@ -1452,7 +1638,9 @@ describe('project membership routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(projectMembershipResponseSchema.parse(response.json())).toEqual({
+    const parsedResponse = projectMembershipResponseSchema.parse(response.json());
+
+    expect(parsedResponse).toEqual({
       membershipId: expect.any(String),
       user: {
         id: targetUser.userId,
@@ -1473,6 +1661,22 @@ describe('project membership routes', () => {
         },
       ],
     });
+
+    const auditLogs = await listProjectMembershipAuditLogs({
+      membershipId: targetMembership.id,
+    });
+
+    expect(auditLogs).toEqual([
+      expect.objectContaining({
+        action: 'ROLES_REPLACED',
+        actorUserId: adminUser.userId,
+        targetUserId: targetUser.userId,
+        fromStatus: 'ACTIVE',
+        toStatus: 'ACTIVE',
+        fromRoleCodes: ['pro', 'user'],
+        toRoleCodes: ['admin'],
+      }),
+    ]);
   });
 
   it('removes prior project roles that are not present in the replacement set', async () => {
@@ -1729,6 +1933,21 @@ describe('project membership routes', () => {
       data: {
         status: 'DISABLED',
       },
+    });
+  }
+
+  async function listProjectMembershipAuditLogs(input?: {
+    membershipId?: string;
+    targetUserId?: string;
+    action?: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED';
+  }) {
+    return app.prisma.projectMembershipAuditLog.findMany({
+      where: {
+        membershipId: input?.membershipId,
+        targetUserId: input?.targetUserId,
+        action: input?.action,
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
   }
 });

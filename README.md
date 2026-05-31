@@ -12,16 +12,17 @@ authentication should rely on server-managed sessions that can be revoked and
 renewed over time. Stateless JWT authentication is not the intended primary
 product model for this service.
 
-The repository is still in the foundation phase. The current implementation
-focuses on the Fastify + TypeScript base, environment validation, Prisma
-setup, health checks, and quality tooling. Auth domain capabilities such as
-users, credentials, sessions, project roles, audit logs, OpenClaw admin
-operations, and MCP tools will be implemented in later steps.
+The repository already includes the initial auth and project-membership
+surface on top of the Fastify + TypeScript base, environment validation,
+Prisma setup, health checks, and quality tooling. Broader admin tooling,
+membership audit history reads, OpenClaw admin operations, and MCP tools
+remain future steps.
 
 Current design references:
 
 - [ADR 0002: Adopt Session-Based Portfolio Identity](./docs/adrs/0002-adopt-session-based-portfolio-identity.md)
 - [ADR 0003: Define Initial Identity Data Model](./docs/adrs/0003-define-initial-identity-data-model.md)
+- [ADR 0004: Record Project Membership Audit Logs](./docs/adrs/0004-record-project-membership-audit-logs.md)
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
 
@@ -33,6 +34,7 @@ Current implementation highlights:
 - Project-scoped access introspection with `GET /projects/:slug/me`.
 - Admin-only membership listing, admission, lifecycle management, and role
   replacement within a project.
+- Structured audit logging for successful project membership mutations.
 - Project-scoped membership and access endpoints are blocked when the target
   project is disabled.
 

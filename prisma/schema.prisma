@@ -28,6 +28,14 @@ enum MembershipStatus {
   REVOKED
 }
 
+enum ProjectMembershipAuditAction {
+  CREATED
+  ROLES_REPLACED
+  SUSPENDED
+  REACTIVATED
+  REVOKED
+}
+
 model User {
   id              String             @id @default(cuid())
   email           String             @db.Text
@@ -40,6 +48,8 @@ model User {
   localCredential LocalCredential?
   sessions        Session[]
   memberships     ProjectMembership[]
+  membershipAuditLogsAsActor  ProjectMembershipAuditLog[] @relation("project_membership_audit_actor")
+  membershipAuditLogsAsTarget ProjectMembershipAuditLog[] @relation("project_membership_audit_target")
 
   @@index([status], map: "users_status_idx")
   @@map("users")
@@ -86,6 +96,7 @@ model Project {
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   roles       ProjectRole[]
   memberships ProjectMembership[]
+  membershipAuditLogs ProjectMembershipAuditLog[]
 
   @@map("projects")
 }
@@ -117,6 +128,7 @@ model ProjectMembership {
   project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   membershipRoles ProjectMembershipRole[]
+  auditLogs       ProjectMembershipAuditLog[]
 
   @@unique([projectId, userId], map: "project_memberships_project_id_user_id_key")
   @@index([projectId], map: "project_memberships_project_id_idx")
@@ -133,4 +145,30 @@ model ProjectMembershipRole {
   @@id([membershipId, roleId])
   @@index([roleId], map: "project_membership_roles_role_id_idx")
   @@map("project_membership_roles")
+}
+
+model ProjectMembershipAuditLog {
+  id            String                       @id @default(cuid())
+  action        ProjectMembershipAuditAction
+  projectId     String                       @map("project_id")
+  membershipId  String                       @map("membership_id")
+  actorUserId   String                       @map("actor_user_id")
+  targetUserId  String                       @map("target_user_id")
+  fromStatus    MembershipStatus?            @map("from_status")
+  toStatus      MembershipStatus?            @map("to_status")
+  fromRoleCodes String[]                     @map("from_role_codes")
+  toRoleCodes   String[]                     @map("to_role_codes")
+  createdAt     DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  project       Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  membership    ProjectMembership            @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  actorUser     User                         @relation("project_membership_audit_actor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  targetUser    User                         @relation("project_membership_audit_target", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@index([projectId], map: "project_membership_audit_logs_project_id_idx")
+  @@index([membershipId], map: "project_membership_audit_logs_membership_id_idx")
+  @@index([actorUserId], map: "project_membership_audit_logs_actor_user_id_idx")
+  @@index([targetUserId], map: "project_membership_audit_logs_target_user_id_idx")
+  @@index([action], map: "project_membership_audit_logs_action_idx")
+  @@index([createdAt], map: "project_membership_audit_logs_created_at_idx")
+  @@map("project_membership_audit_logs")
 }

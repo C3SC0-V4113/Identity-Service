@@ -20,6 +20,8 @@ Related decision:
 - `ProjectRole`: a role that exists only inside a single project.
 - `ProjectMembership`: a user's admission into a project.
 - `ProjectMembershipRole`: the role assignments attached to a membership.
+- `ProjectMembershipAuditLog`: immutable audit rows for administrative
+  membership mutations.
 
 ## Cardinality Rules
 
@@ -29,7 +31,10 @@ Related decision:
   project.
 - One `Project` may define many `ProjectRole` records.
 - One `ProjectMembership` may have many assigned roles.
+- One `ProjectMembership` may have many audit log records.
 - Role codes are unique inside a project, not across the whole system.
+- One `User` may appear in many audit log rows as the acting admin or as the
+  target member.
 
 ## Role Scope
 
@@ -70,8 +75,12 @@ erDiagram
     User ||--o{ ProjectMembership : "joins"
     Project ||--o{ ProjectRole : "defines"
     Project ||--o{ ProjectMembership : "admits"
+    Project ||--o{ ProjectMembershipAuditLog : "tracks"
     ProjectMembership ||--o{ ProjectMembershipRole : "assigns"
+    ProjectMembership ||--o{ ProjectMembershipAuditLog : "records"
     ProjectRole ||--o{ ProjectMembershipRole : "grants"
+    User ||--o{ ProjectMembershipAuditLog : "acts in"
+    User ||--o{ ProjectMembershipAuditLog : "is target of"
 
     User {
         string id PK
@@ -139,5 +148,19 @@ erDiagram
     ProjectMembershipRole {
         string membershipId PK, FK
         string roleId PK, FK
+    }
+
+    ProjectMembershipAuditLog {
+        string id PK
+        enum action
+        string projectId FK
+        string membershipId FK
+        string actorUserId FK
+        string targetUserId FK
+        enum fromStatus
+        enum toStatus
+        string[] fromRoleCodes
+        string[] toRoleCodes
+        datetime createdAt
     }
 ```

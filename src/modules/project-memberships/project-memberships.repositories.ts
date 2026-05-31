@@ -5,6 +5,7 @@ type PrismaDbClient = {
   projectRole: PrismaClient['projectRole'];
   projectMembership: PrismaClient['projectMembership'];
   projectMembershipRole: PrismaClient['projectMembershipRole'];
+  projectMembershipAuditLog: PrismaClient['projectMembershipAuditLog'];
   user: PrismaClient['user'];
 };
 
@@ -298,6 +299,35 @@ export async function updateMembershipStatus(
       status: input.status,
     },
     select: membershipWithRolesSelect,
+  });
+}
+
+export async function createProjectMembershipAuditLog(
+  prisma: PrismaDbClient,
+  input: {
+    action: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED';
+    projectId: string;
+    membershipId: string;
+    actorUserId: string;
+    targetUserId: string;
+    fromStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED' | null;
+    toStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED' | null;
+    fromRoleCodes: readonly string[];
+    toRoleCodes: readonly string[];
+  },
+) {
+  return prisma.projectMembershipAuditLog.create({
+    data: {
+      action: input.action,
+      projectId: input.projectId,
+      membershipId: input.membershipId,
+      actorUserId: input.actorUserId,
+      targetUserId: input.targetUserId,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      fromRoleCodes: [...input.fromRoleCodes],
+      toRoleCodes: [...input.toRoleCodes],
+    },
   });
 }
 

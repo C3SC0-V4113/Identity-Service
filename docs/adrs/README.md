@@ -13,3 +13,4 @@ This directory contains Architecture Decision Records for `identity-service`.
 - [0001-adopt-fastify-typescript-service-foundation.md](./0001-adopt-fastify-typescript-service-foundation.md)
 - [0002-adopt-session-based-portfolio-identity.md](./0002-adopt-session-based-portfolio-identity.md)
 - [0003-define-initial-identity-data-model.md](./0003-define-initial-identity-data-model.md)
+- [0004-record-project-membership-audit-logs.md](./0004-record-project-membership-audit-logs.md)
