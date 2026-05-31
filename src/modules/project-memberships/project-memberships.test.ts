@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../../app.js';
 import { authResponseSchema } from '../auth/auth.schemas.js';
@@ -12,16 +12,13 @@ import {
 describe('project membership routes', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
 
-  beforeAll(async () => {
-    app = await buildApp();
-  });
-
   beforeEach(async () => {
+    app = await buildApp();
     await clearIdentityData();
     await upsertProjectSeedData(app.prisma);
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await clearIdentityData();
     await app.close();
   });
@@ -667,6 +664,597 @@ describe('project membership routes', () => {
     });
   });
 
+  it('suspends an active membership when another active admin remains', async () => {
+    const primaryAdmin = await registerUser({
+      email: 'primary-admin@example.com',
+      password: 'supersecret',
+    });
+    const secondaryAdmin = await registerUser({
+      email: 'secondary-admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: primaryAdmin.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: secondaryAdmin.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/suspend`,
+      headers: {
+        cookie: primaryAdmin.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+      membershipId: expect.any(String),
+      status: 'SUSPENDED',
+      user: {
+        id: targetUser.userId,
+        email: 'target@example.com',
+      },
+    });
+  });
+
+  it('reactivates a suspended membership back to active', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/reactivate`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+      membershipId: expect.any(String),
+      status: 'ACTIVE',
+      user: {
+        id: targetUser.userId,
+      },
+    });
+  });
+
+  it('revokes an active membership', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/revoke`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+      membershipId: expect.any(String),
+      status: 'REVOKED',
+      user: {
+        id: targetUser.userId,
+      },
+    });
+  });
+
+  it('revokes a suspended membership', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/revoke`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+      membershipId: expect.any(String),
+      status: 'REVOKED',
+      user: {
+        id: targetUser.userId,
+      },
+    });
+  });
+
+  it('rejects reactivation for a revoked membership', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'REVOKED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/reactivate`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_MEMBERSHIP_STATUS_TRANSITION_INVALID',
+        message: 'Cannot reactivate membership from REVOKED status',
+      },
+    });
+  });
+
+  it('rejects suspension for a suspended membership', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/suspend`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_MEMBERSHIP_STATUS_TRANSITION_INVALID',
+        message: 'Cannot suspend membership from SUSPENDED status',
+      },
+    });
+  });
+
+  it('rejects revocation for a revoked membership', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'REVOKED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUser.userId}/revoke`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_MEMBERSHIP_STATUS_TRANSITION_INVALID',
+        message: 'Cannot revoke membership from REVOKED status',
+      },
+    });
+  });
+
+  it('keeps revoked memberships non-readmittable through membership creation', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'REVOKED',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/projects/other-gpt/memberships',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+      payload: {
+        email: 'target@example.com',
+        roleCodes: ['user'],
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_MEMBERSHIP_ALREADY_EXISTS',
+        message: 'Project membership already exists',
+      },
+    });
+  });
+
+  it('prevents suspending the last active admin in a project', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${adminUser.userId}/suspend`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_LAST_ACTIVE_ADMIN_REQUIRED',
+        message: 'At least one active project admin is required',
+      },
+    });
+  });
+
+  it('prevents revoking the last active admin in a project', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${adminUser.userId}/revoke`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_LAST_ACTIVE_ADMIN_REQUIRED',
+        message: 'At least one active project admin is required',
+      },
+    });
+  });
+
+  it('prevents removing the admin role from the last active admin', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/projects/other-gpt/memberships/${adminUser.userId}/roles`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+      payload: {
+        roleCodes: ['user'],
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_LAST_ACTIVE_ADMIN_REQUIRED',
+        message: 'At least one active project admin is required',
+      },
+    });
+  });
+
+  it('allows removing admin from one membership when another active admin remains', async () => {
+    const primaryAdmin = await registerUser({
+      email: 'primary-admin@example.com',
+      password: 'supersecret',
+    });
+    const secondaryAdmin = await registerUser({
+      email: 'secondary-admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: primaryAdmin.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: secondaryAdmin.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/projects/other-gpt/memberships/${secondaryAdmin.userId}/roles`,
+      headers: {
+        cookie: primaryAdmin.cookie,
+      },
+      payload: {
+        roleCodes: ['user'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(projectMembershipResponseSchema.parse(response.json())).toMatchObject({
+      membershipId: expect.any(String),
+      status: 'ACTIVE',
+      user: {
+        id: secondaryAdmin.userId,
+      },
+      roles: [
+        {
+          code: 'user',
+          name: 'User',
+        },
+      ],
+    });
+  });
+
+  it('blocks project-scoped membership endpoints when the project is disabled', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+    await registerUser({
+      email: 'new-target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await createMembership({
+      userId: targetUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+      status: 'SUSPENDED',
+    });
+    await disableProject('other-gpt');
+
+    const requests = [
+      { method: 'GET', url: '/projects/other-gpt/me' },
+      { method: 'GET', url: '/projects/other-gpt/memberships' },
+      {
+        method: 'POST',
+        url: '/projects/other-gpt/memberships',
+        payload: {
+          email: 'new-target@example.com',
+          roleCodes: ['user'],
+        },
+      },
+      {
+        method: 'PUT',
+        url: `/projects/other-gpt/memberships/${targetUser.userId}/roles`,
+        payload: {
+          roleCodes: ['user'],
+        },
+      },
+      {
+        method: 'POST',
+        url: `/projects/other-gpt/memberships/${targetUser.userId}/suspend`,
+      },
+      {
+        method: 'POST',
+        url: `/projects/other-gpt/memberships/${targetUser.userId}/reactivate`,
+      },
+      {
+        method: 'POST',
+        url: `/projects/other-gpt/memberships/${targetUser.userId}/revoke`,
+      },
+    ] as const;
+
+    for (const request of requests) {
+      const response = await app.inject({
+        method: request.method,
+        url: request.url,
+        headers: {
+          cookie: adminUser.cookie,
+        },
+        payload: 'payload' in request ? request.payload : undefined,
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toEqual({
+        error: {
+          code: 'PROJECT_DISABLED',
+          message: 'Project is disabled',
+        },
+      });
+    }
+  });
+
+  it('keeps auth me unchanged when a project is disabled', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin', 'pro'],
+    });
+    await disableProject('other-gpt');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = authResponseSchema.parse(response.json());
+
+    expect(parsedResponse.user.memberships).toHaveLength(1);
+    expect(parsedResponse.user.memberships[0]).toMatchObject({
+      id: expect.any(String),
+      status: 'ACTIVE',
+      project: {
+        slug: 'other-gpt',
+        name: 'Other GPT',
+      },
+      roles: [
+        {
+          code: 'admin',
+          name: 'Admin',
+        },
+        {
+          code: 'pro',
+          name: 'Pro',
+        },
+      ],
+    });
+  });
+
   it('creates a project membership with valid project roles', async () => {
     const adminUser = await registerUser({
       email: 'admin@example.com',
@@ -1131,6 +1719,17 @@ describe('project membership routes', () => {
     });
 
     return user.id;
+  }
+
+  async function disableProject(projectSlug: string) {
+    await app.prisma.project.update({
+      where: {
+        slug: projectSlug,
+      },
+      data: {
+        status: 'DISABLED',
+      },
+    });
   }
 });
 

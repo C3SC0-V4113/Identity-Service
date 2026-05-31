@@ -31,7 +31,10 @@ Current implementation highlights:
   profile introspection.
 - Project role seeds for `other-gpt` and `cost-console`.
 - Project-scoped access introspection with `GET /projects/:slug/me`.
-- Admin-only membership admission and role replacement within a project.
+- Admin-only membership listing, admission, lifecycle management, and role
+  replacement within a project.
+- Project-scoped membership and access endpoints are blocked when the target
+  project is disabled.
 
 ## Local setup
 

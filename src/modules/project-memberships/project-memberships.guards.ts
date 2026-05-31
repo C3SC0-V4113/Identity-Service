@@ -16,6 +16,13 @@ export async function requireProjectBySlug(prisma: PrismaDbClient, slug: string)
     });
   }
 
+  if (project.status === 'DISABLED') {
+    throw new AppError('Project is disabled', {
+      statusCode: 403,
+      code: 'PROJECT_DISABLED',
+    });
+  }
+
   return project;
 }
 

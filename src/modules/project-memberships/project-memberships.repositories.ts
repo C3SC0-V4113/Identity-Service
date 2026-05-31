@@ -12,6 +12,7 @@ const projectSummarySelect = {
   id: true,
   slug: true,
   name: true,
+  status: true,
 } satisfies Prisma.ProjectSelect;
 
 const projectRoleSummarySelect = {
@@ -206,6 +207,31 @@ export async function listMembershipsByProject(
   });
 }
 
+export async function countOtherActiveAdminMemberships(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    excludeMembershipId: string;
+  },
+) {
+  return prisma.projectMembership.count({
+    where: {
+      projectId: input.projectId,
+      status: 'ACTIVE',
+      id: {
+        not: input.excludeMembershipId,
+      },
+      membershipRoles: {
+        some: {
+          role: {
+            code: 'admin',
+          },
+        },
+      },
+    },
+  });
+}
+
 export async function createMembershipWithRoles(
   prisma: PrismaDbClient,
   input: {
@@ -252,6 +278,24 @@ export async function replaceMembershipRoles(
   return prisma.projectMembership.findUniqueOrThrow({
     where: {
       id: input.membershipId,
+    },
+    select: membershipWithRolesSelect,
+  });
+}
+
+export async function updateMembershipStatus(
+  prisma: PrismaDbClient,
+  input: {
+    membershipId: string;
+    status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+  },
+) {
+  return prisma.projectMembership.update({
+    where: {
+      id: input.membershipId,
+    },
+    data: {
+      status: input.status,
     },
     select: membershipWithRolesSelect,
   });

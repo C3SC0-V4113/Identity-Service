@@ -5,6 +5,7 @@ import { normalizeEmail } from '../../shared/auth/email.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { requireProjectAdmin, requireProjectBySlug } from './project-memberships.guards.js';
 import {
+  countOtherActiveAdminMemberships,
   createMembershipWithRoles,
   findMembershipByProjectAndUser,
   findMembershipWithRolesByProjectAndUser,
@@ -12,6 +13,7 @@ import {
   findUserByEmailNormalized,
   listMembershipsByProject,
   replaceMembershipRoles,
+  updateMembershipStatus,
 } from './project-memberships.repositories.js';
 import type {
   CreateProjectMembershipRequest,
@@ -230,6 +232,24 @@ export async function replaceProjectMembershipRoles(
   const updatedMembership = await prisma.$transaction(async (transactionClient: unknown) => {
     const tx = transactionClient as unknown as PrismaDbClient;
     const roles = await resolveProjectRolesOrThrow(tx, project.id, input.body.roleCodes);
+    const targetMembership = await findMembershipWithRolesByProjectAndUser(
+      tx,
+      project.id,
+      input.targetUserId,
+    );
+
+    if (targetMembership === null) {
+      throw new AppError('Project membership not found', {
+        statusCode: 404,
+        code: 'PROJECT_MEMBERSHIP_NOT_FOUND',
+      });
+    }
+
+    await ensureActiveAdminRemainsAfterRoleReplacement(tx, {
+      projectId: project.id,
+      membership: targetMembership,
+      nextRoleCodes: roles.map((role: (typeof roles)[number]) => role.code),
+    });
 
     return replaceMembershipRoles(tx, {
       membershipId: membership.id,
@@ -238,6 +258,60 @@ export async function replaceProjectMembershipRoles(
   });
 
   return mapProjectMembershipResponse(updatedMembership);
+}
+
+export async function suspendProjectMembership(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    targetUserId: string;
+  },
+): Promise<ProjectMembershipResponse> {
+  return transitionProjectMembershipStatus(prisma, {
+    actorUserId: input.actorUserId,
+    projectSlug: input.projectSlug,
+    targetUserId: input.targetUserId,
+    action: 'suspend',
+    nextStatus: 'SUSPENDED',
+    allowedCurrentStatuses: ['ACTIVE'],
+  });
+}
+
+export async function reactivateProjectMembership(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    targetUserId: string;
+  },
+): Promise<ProjectMembershipResponse> {
+  return transitionProjectMembershipStatus(prisma, {
+    actorUserId: input.actorUserId,
+    projectSlug: input.projectSlug,
+    targetUserId: input.targetUserId,
+    action: 'reactivate',
+    nextStatus: 'ACTIVE',
+    allowedCurrentStatuses: ['SUSPENDED'],
+  });
+}
+
+export async function revokeProjectMembership(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    targetUserId: string;
+  },
+): Promise<ProjectMembershipResponse> {
+  return transitionProjectMembershipStatus(prisma, {
+    actorUserId: input.actorUserId,
+    projectSlug: input.projectSlug,
+    targetUserId: input.targetUserId,
+    action: 'revoke',
+    nextStatus: 'REVOKED',
+    allowedCurrentStatuses: ['ACTIVE', 'SUSPENDED'],
+  });
 }
 
 async function resolveProjectRolesOrThrow(
@@ -294,6 +368,153 @@ function mapProjectMembershipResponse(membership: {
     status: membership.status,
     roles: membership.membershipRoles.map((membershipRole) => membershipRole.role),
   };
+}
+
+async function transitionProjectMembershipStatus(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    targetUserId: string;
+    action: 'suspend' | 'reactivate' | 'revoke';
+    nextStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+    allowedCurrentStatuses: Array<'ACTIVE' | 'SUSPENDED' | 'REVOKED'>;
+  },
+): Promise<ProjectMembershipResponse> {
+  const project = await requireProjectBySlug(prisma, input.projectSlug);
+  await requireProjectAdmin(prisma, project.id, input.actorUserId);
+
+  const updatedMembership = await prisma.$transaction(async (transactionClient: unknown) => {
+    const tx = transactionClient as unknown as PrismaDbClient;
+    const membership = await findMembershipWithRolesByProjectAndUser(
+      tx,
+      project.id,
+      input.targetUserId,
+    );
+
+    if (membership === null) {
+      throw new AppError('Project membership not found', {
+        statusCode: 404,
+        code: 'PROJECT_MEMBERSHIP_NOT_FOUND',
+      });
+    }
+
+    ensureValidMembershipStatusTransition({
+      action: input.action,
+      currentStatus: membership.status,
+      allowedCurrentStatuses: input.allowedCurrentStatuses,
+    });
+
+    await ensureActiveAdminRemainsAfterStatusChange(tx, {
+      projectId: project.id,
+      membership,
+      nextStatus: input.nextStatus,
+    });
+
+    return updateMembershipStatus(tx, {
+      membershipId: membership.id,
+      status: input.nextStatus,
+    });
+  });
+
+  return mapProjectMembershipResponse(updatedMembership);
+}
+
+function ensureValidMembershipStatusTransition(input: {
+  action: 'suspend' | 'reactivate' | 'revoke';
+  currentStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+  allowedCurrentStatuses: Array<'ACTIVE' | 'SUSPENDED' | 'REVOKED'>;
+}) {
+  if (input.allowedCurrentStatuses.includes(input.currentStatus)) {
+    return;
+  }
+
+  throw new AppError(`Cannot ${input.action} membership from ${input.currentStatus} status`, {
+    statusCode: 409,
+    code: 'PROJECT_MEMBERSHIP_STATUS_TRANSITION_INVALID',
+  });
+}
+
+async function ensureActiveAdminRemainsAfterStatusChange(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    membership: Awaited<ReturnType<typeof findMembershipWithRolesByProjectAndUser>>;
+    nextStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+  },
+) {
+  if (input.membership === null) {
+    return;
+  }
+
+  const currentlyActiveAdmin = isActiveAdminMembership(
+    input.membership.status,
+    input.membership.membershipRoles,
+  );
+  const nextActiveAdmin = isActiveAdminMembership(
+    input.nextStatus,
+    input.membership.membershipRoles,
+  );
+
+  if (!currentlyActiveAdmin || nextActiveAdmin) {
+    return;
+  }
+
+  await ensureAnotherActiveAdminExists(prisma, input.projectId, input.membership.id);
+}
+
+async function ensureActiveAdminRemainsAfterRoleReplacement(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    membership: NonNullable<Awaited<ReturnType<typeof findMembershipWithRolesByProjectAndUser>>>;
+    nextRoleCodes: readonly string[];
+  },
+) {
+  const currentRoleCodes = input.membership.membershipRoles.map(
+    (membershipRole: (typeof input.membership.membershipRoles)[number]) => membershipRole.role.code,
+  );
+  const currentlyActiveAdmin = isActiveAdminMembership(input.membership.status, currentRoleCodes);
+  const nextActiveAdmin = isActiveAdminMembership(input.membership.status, input.nextRoleCodes);
+
+  if (!currentlyActiveAdmin || nextActiveAdmin) {
+    return;
+  }
+
+  await ensureAnotherActiveAdminExists(prisma, input.projectId, input.membership.id);
+}
+
+async function ensureAnotherActiveAdminExists(
+  prisma: PrismaDbClient,
+  projectId: string,
+  membershipId: string,
+) {
+  const otherActiveAdminCount = await countOtherActiveAdminMemberships(prisma, {
+    projectId,
+    excludeMembershipId: membershipId,
+  });
+
+  if (otherActiveAdminCount > 0) {
+    return;
+  }
+
+  throw new AppError('At least one active project admin is required', {
+    statusCode: 409,
+    code: 'PROJECT_LAST_ACTIVE_ADMIN_REQUIRED',
+  });
+}
+
+function isActiveAdminMembership(
+  status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED',
+  roles: readonly string[] | ReadonlyArray<{ role: { code: string } }>,
+) {
+  if (status !== 'ACTIVE') {
+    return false;
+  }
+
+  return roles.some((role) =>
+    typeof role === 'string' ? role === 'admin' : role.role.code === 'admin',
+  );
 }
 
 function isMembershipConflictError(error: unknown): error is PrismaClientKnownRequestError {

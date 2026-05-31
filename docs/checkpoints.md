@@ -15,7 +15,11 @@
   `ProjectMembershipRole`.
 - Project-scoped authorization endpoints are available:
   `GET /projects/:slug/me`,
+  `GET /projects/:slug/memberships`,
   `POST /projects/:slug/memberships`,
+  `POST /projects/:slug/memberships/:userId/suspend`,
+  `POST /projects/:slug/memberships/:userId/reactivate`,
+  `POST /projects/:slug/memberships/:userId/revoke`,
   `PUT /projects/:slug/memberships/:userId/roles`.
 
 ## Completed slices
@@ -28,28 +32,31 @@
   memberships, and membership-role joins.
 - Seed bootstrap for initial projects and project roles.
 - Project-scoped access introspection and admin-only membership management.
+- Admin-only project member listing with pagination and filtering.
+- Membership lifecycle operations and project-disable gating.
 
 ## Current slice
 
-- Slice: Project memberships + project-scoped authorization.
+- Slice: Membership lifecycle + project-disable gating.
 - Status: implemented.
 - Scope delivered:
-  `GET /projects/:slug/me` for access introspection,
-  `POST /projects/:slug/memberships` for admin admission by email,
-  `PUT /projects/:slug/memberships/:userId/roles` for full role-set
-  replacement.
+  `GET /projects/:slug/memberships` for admin listing with cursor pagination
+  and filters,
+  `POST /projects/:slug/memberships/:userId/suspend`,
+  `POST /projects/:slug/memberships/:userId/reactivate`,
+  `POST /projects/:slug/memberships/:userId/revoke`,
+  project-scoped HTTP gating when `Project.status = DISABLED`,
+  and last-active-admin protection for lifecycle and role replacement flows.
 - Shared auth extraction completed through `src/shared/auth/session-auth.ts`
   so future modules can reuse authenticated-session guards without importing
   `auth.services`.
 
 ## Next slices
 
-- Add project member listing for admins with pagination and filtering.
-- Add membership lifecycle operations: revoke, suspend, reactivate.
-- Decide whether project status (`DISABLED`) should actively gate access and
-  admin operations at HTTP level.
 - Introduce audit logging for project membership changes.
 - Define admin UX or operational tooling beyond local bootstrap scripts.
+- Decide whether revoked memberships should eventually support first-class
+  readmission through HTTP or a future operational flow.
 
 ## Closed decisions
 
@@ -63,6 +70,12 @@
 - Role updates replace the full set of membership roles in one operation.
 - First-project-admin bootstrap is handled by a local script, not by a
   temporary HTTP endpoint.
+- Project-scoped endpoints are blocked with `403 PROJECT_DISABLED` when
+  `Project.status = DISABLED`.
+- The API must not allow a project to lose its last `ACTIVE` admin through
+  lifecycle operations or role replacement.
+- Membership revocation is terminal in the current HTTP surface. Revoked
+  memberships are not reactivated or readmitted through the API yet.
 
 ## Operational notes
 
@@ -92,9 +105,7 @@
 
 ## Open questions
 
-- Should future slices block access when `Project.status = DISABLED`, or is that
-  status only descriptive for now?
-- Should a future admin-management slice allow removing the last remaining admin
-  of a project, or should that be prevented?
 - Should membership metadata get a first-class contract soon, or remain opaque
   until an explicit use case appears?
+- Should the service eventually support a first-class readmission flow for
+  revoked memberships, or keep revocation permanently terminal?

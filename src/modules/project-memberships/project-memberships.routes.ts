@@ -19,7 +19,10 @@ import {
   createProjectMembership,
   getProjectAccess,
   listProjectMemberships,
+  reactivateProjectMembership,
+  revokeProjectMembership,
   replaceProjectMembershipRoles,
+  suspendProjectMembership,
 } from './project-memberships.services.js';
 
 export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, done) => {
@@ -61,6 +64,45 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
     });
 
     return reply.status(201).send(projectMembershipResponseSchema.parse(result));
+  });
+
+  app.post('/projects/:slug/memberships/:userId/suspend', async (request, reply) => {
+    const params = projectMembershipParamsSchema.parse(request.params);
+    const authenticatedSession = await requireRequestAuth(request.cookies);
+
+    const result = await suspendProjectMembership(app.prisma, {
+      actorUserId: authenticatedSession.user.id,
+      projectSlug: params.slug,
+      targetUserId: params.userId,
+    });
+
+    return reply.status(200).send(projectMembershipResponseSchema.parse(result));
+  });
+
+  app.post('/projects/:slug/memberships/:userId/reactivate', async (request, reply) => {
+    const params = projectMembershipParamsSchema.parse(request.params);
+    const authenticatedSession = await requireRequestAuth(request.cookies);
+
+    const result = await reactivateProjectMembership(app.prisma, {
+      actorUserId: authenticatedSession.user.id,
+      projectSlug: params.slug,
+      targetUserId: params.userId,
+    });
+
+    return reply.status(200).send(projectMembershipResponseSchema.parse(result));
+  });
+
+  app.post('/projects/:slug/memberships/:userId/revoke', async (request, reply) => {
+    const params = projectMembershipParamsSchema.parse(request.params);
+    const authenticatedSession = await requireRequestAuth(request.cookies);
+
+    const result = await revokeProjectMembership(app.prisma, {
+      actorUserId: authenticatedSession.user.id,
+      projectSlug: params.slug,
+      targetUserId: params.userId,
+    });
+
+    return reply.status(200).send(projectMembershipResponseSchema.parse(result));
   });
 
   app.put('/projects/:slug/memberships/:userId/roles', async (request, reply) => {
