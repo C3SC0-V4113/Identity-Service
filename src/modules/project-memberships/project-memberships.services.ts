@@ -12,14 +12,17 @@ import {
   findMembershipWithRolesByProjectAndUser,
   findProjectRolesByCodes,
   findUserByEmailNormalized,
+  listAuditLogsByProject,
   listMembershipsByProject,
   replaceMembershipRoles,
   updateMembershipStatus,
 } from './project-memberships.repositories.js';
 import type {
   CreateProjectMembershipRequest,
+  ListProjectAuditLogsQuery,
   ListProjectMembershipsQuery,
   ProjectAccessResponse,
+  ProjectAuditLogListResponse,
   ProjectMembershipListResponse,
   ProjectMembershipResponse,
   ReplaceProjectMembershipRolesRequest,
@@ -621,4 +624,56 @@ function encodeMembershipListCursor(createdAt: Date, id: string): string {
     }),
     'utf8',
   ).toString('base64url');
+}
+
+export async function listProjectMembershipAuditLogs(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    query: ListProjectAuditLogsQuery;
+  },
+): Promise<ProjectAuditLogListResponse> {
+  const project = await requireProjectBySlug(prisma, input.projectSlug);
+  await requireProjectAdmin(prisma, project.id, input.actorUserId);
+
+  const records = await listAuditLogsByProject(prisma, {
+    projectId: project.id,
+    limit: input.query.limit + 1,
+    action: input.query.action,
+    targetUserId: input.query.targetUserId,
+    membershipId: input.query.membershipId,
+    cursor:
+      input.query.cursor === undefined
+        ? undefined
+        : membershipListCursorSchema.parse(input.query.cursor),
+  });
+
+  const hasMore = records.length > input.query.limit;
+  const pageItems = hasMore ? records.slice(0, input.query.limit) : records;
+  const lastItem = pageItems.at(-1);
+
+  return {
+    project,
+    items: pageItems.map((auditLog) => ({
+      id: auditLog.id,
+      action: auditLog.action,
+      membershipId: auditLog.membershipId,
+      actor: auditLog.actorUser,
+      target: auditLog.targetUser,
+      fromStatus: auditLog.fromStatus,
+      toStatus: auditLog.toStatus,
+      fromRoleCodes: auditLog.fromRoleCodes,
+      toRoleCodes: auditLog.toRoleCodes,
+      createdAt: auditLog.createdAt.toISOString(),
+    })),
+    page: {
+      nextCursor:
+        hasMore && lastItem !== undefined
+          ? encodeMembershipListCursor(lastItem.createdAt, lastItem.id)
+          : null,
+      hasMore,
+      limit: input.query.limit,
+    },
+  };
 }

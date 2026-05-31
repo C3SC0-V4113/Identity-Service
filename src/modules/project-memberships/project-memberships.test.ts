@@ -5,6 +5,7 @@ import { authResponseSchema } from '../auth/auth.schemas.js';
 import { upsertProjectSeedData } from '../identity/bootstrap/project-seed.js';
 import {
   projectAccessResponseSchema,
+  projectAuditLogListResponseSchema,
   projectMembershipListResponseSchema,
   projectMembershipResponseSchema,
 } from './project-memberships.schemas.js';
@@ -1809,6 +1810,353 @@ describe('project membership routes', () => {
       },
     });
   });
+
+  it('returns 401 when listing audit logs without authentication', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs',
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
+      },
+    });
+  });
+
+  it('returns 404 when listing audit logs for an unknown project', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/unknown/audit-logs',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_NOT_FOUND',
+        message: 'Project not found',
+      },
+    });
+  });
+
+  it('returns 403 when a non-admin member lists audit logs', async () => {
+    const memberUser = await registerUser({
+      email: 'member@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: memberUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['user'],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs',
+      headers: {
+        cookie: memberUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_ADMIN_REQUIRED',
+        message: 'Project admin role required',
+      },
+    });
+  });
+
+  it('returns 403 when listing audit logs for a disabled project', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+    await disableProject('other-gpt');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_DISABLED',
+        message: 'Project is disabled',
+      },
+    });
+  });
+
+  it('returns the project audit history newest-first with full diffs for admins', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+      displayName: 'Admin',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+      displayName: 'Target',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    await createTargetMembershipViaApi(adminUser.cookie, 'target@example.com', ['user']);
+    await replaceRolesViaApi(adminUser.cookie, targetUser.userId, ['pro']);
+    await suspendViaApi(adminUser.cookie, targetUser.userId);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const parsedResponse = projectAuditLogListResponseSchema.parse(response.json());
+    expect(parsedResponse.project).toEqual({
+      id: expect.any(String),
+      slug: 'other-gpt',
+      name: 'Other GPT',
+    });
+
+    const expectedOrder = await expectedAuditOrder({ targetUserId: targetUser.userId });
+    expect(parsedResponse.items.map((item) => item.id)).toEqual(expectedOrder);
+
+    expect(parsedResponse.items.map((item) => item.action)).toEqual([
+      'SUSPENDED',
+      'ROLES_REPLACED',
+      'CREATED',
+    ]);
+
+    const [suspended, rolesReplaced, created] = parsedResponse.items;
+
+    expect(created).toMatchObject({
+      action: 'CREATED',
+      actor: { id: adminUser.userId, email: 'admin@example.com', displayName: 'Admin' },
+      target: { id: targetUser.userId, email: 'target@example.com', displayName: 'Target' },
+      fromStatus: null,
+      toStatus: 'ACTIVE',
+      fromRoleCodes: [],
+      toRoleCodes: ['user'],
+    });
+    expect(rolesReplaced).toMatchObject({
+      action: 'ROLES_REPLACED',
+      fromStatus: 'ACTIVE',
+      toStatus: 'ACTIVE',
+      fromRoleCodes: ['user'],
+      toRoleCodes: ['pro'],
+    });
+    expect(suspended).toMatchObject({
+      action: 'SUSPENDED',
+      fromStatus: 'ACTIVE',
+      toStatus: 'SUSPENDED',
+      fromRoleCodes: ['pro'],
+      toRoleCodes: ['pro'],
+    });
+    expect(parsedResponse.page).toEqual({
+      nextCursor: null,
+      hasMore: false,
+      limit: 20,
+    });
+  });
+
+  it('filters audit logs by action and target user', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const firstTarget = await registerUser({
+      email: 'first@example.com',
+      password: 'supersecret',
+    });
+    const secondTarget = await registerUser({
+      email: 'second@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    await createTargetMembershipViaApi(adminUser.cookie, 'first@example.com', ['user']);
+    await createTargetMembershipViaApi(adminUser.cookie, 'second@example.com', ['user']);
+    await suspendViaApi(adminUser.cookie, firstTarget.userId);
+
+    const byAction = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs?action=CREATED',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(byAction.statusCode).toBe(200);
+    const parsedByAction = projectAuditLogListResponseSchema.parse(byAction.json());
+    expect(parsedByAction.items.map((item) => item.action)).toEqual(['CREATED', 'CREATED']);
+
+    const byTarget = await app.inject({
+      method: 'GET',
+      url: `/projects/other-gpt/audit-logs?targetUserId=${secondTarget.userId}`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(byTarget.statusCode).toBe(200);
+    const parsedByTarget = projectAuditLogListResponseSchema.parse(byTarget.json());
+    expect(parsedByTarget.items.map((item) => item.target.id)).toEqual([secondTarget.userId]);
+    expect(parsedByTarget.items.map((item) => item.action)).toEqual(['CREATED']);
+  });
+
+  it('paginates audit logs through a stable cursor', async () => {
+    const adminUser = await registerUser({
+      email: 'admin@example.com',
+      password: 'supersecret',
+    });
+    const targetUser = await registerUser({
+      email: 'target@example.com',
+      password: 'supersecret',
+    });
+
+    await createMembership({
+      userId: adminUser.userId,
+      projectSlug: 'other-gpt',
+      roleCodes: ['admin'],
+    });
+
+    await createTargetMembershipViaApi(adminUser.cookie, 'target@example.com', ['user']);
+    await suspendViaApi(adminUser.cookie, targetUser.userId);
+    await reactivateViaApi(adminUser.cookie, targetUser.userId);
+
+    const expectedOrder = await expectedAuditOrder({ targetUserId: targetUser.userId });
+    expect(expectedOrder).toHaveLength(3);
+
+    const firstPage = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/audit-logs?limit=2',
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(firstPage.statusCode).toBe(200);
+    const parsedFirstPage = projectAuditLogListResponseSchema.parse(firstPage.json());
+    expect(parsedFirstPage.items.map((item) => item.id)).toEqual(expectedOrder.slice(0, 2));
+    expect(parsedFirstPage.page.hasMore).toBe(true);
+    expect(parsedFirstPage.page.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await app.inject({
+      method: 'GET',
+      url: `/projects/other-gpt/audit-logs?limit=2&cursor=${encodeURIComponent(
+        parsedFirstPage.page.nextCursor ?? '',
+      )}`,
+      headers: {
+        cookie: adminUser.cookie,
+      },
+    });
+
+    expect(secondPage.statusCode).toBe(200);
+    const parsedSecondPage = projectAuditLogListResponseSchema.parse(secondPage.json());
+    expect(parsedSecondPage.items.map((item) => item.id)).toEqual(expectedOrder.slice(2));
+    expect(parsedSecondPage.page).toEqual({
+      nextCursor: null,
+      hasMore: false,
+      limit: 2,
+    });
+  });
+
+  async function createTargetMembershipViaApi(cookie: string, email: string, roleCodes: string[]) {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/projects/other-gpt/memberships',
+      headers: {
+        cookie,
+      },
+      payload: {
+        email,
+        roleCodes,
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+  }
+
+  async function replaceRolesViaApi(cookie: string, targetUserId: string, roleCodes: string[]) {
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/projects/other-gpt/memberships/${targetUserId}/roles`,
+      headers: {
+        cookie,
+      },
+      payload: {
+        roleCodes,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+  }
+
+  async function suspendViaApi(cookie: string, targetUserId: string) {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUserId}/suspend`,
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+  }
+
+  async function reactivateViaApi(cookie: string, targetUserId: string) {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/projects/other-gpt/memberships/${targetUserId}/reactivate`,
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+  }
+
+  async function expectedAuditOrder(input: { targetUserId: string }) {
+    const ascendingRows = await listProjectMembershipAuditLogs({
+      targetUserId: input.targetUserId,
+    });
+
+    return ascendingRows.map((row) => row.id).reverse();
+  }
 
   async function clearIdentityData() {
     await app.prisma.projectMembershipRole.deleteMany();

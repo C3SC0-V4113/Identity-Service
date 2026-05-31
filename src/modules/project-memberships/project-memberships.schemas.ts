@@ -35,6 +35,22 @@ export const listProjectMembershipsQuerySchema = z.object({
   q: z.string().trim().min(1).optional(),
 });
 
+export const membershipAuditActionSchema = z.enum([
+  'CREATED',
+  'ROLES_REPLACED',
+  'SUSPENDED',
+  'REACTIVATED',
+  'REVOKED',
+]);
+
+export const listProjectAuditLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().trim().min(1).optional(),
+  action: membershipAuditActionSchema.optional(),
+  targetUserId: z.string().trim().min(1).optional(),
+  membershipId: z.string().trim().min(1).optional(),
+});
+
 export const createProjectMembershipRequestSchema = z.object({
   email: z.string().trim().pipe(z.email()),
   roleCodes: z.array(z.string().trim().min(1)).min(1),
@@ -82,6 +98,29 @@ export const projectMembershipListResponseSchema = z.object({
   }),
 });
 
+export const projectAuditLogItemSchema = z.object({
+  id: z.string(),
+  action: membershipAuditActionSchema,
+  membershipId: z.string(),
+  actor: projectMembershipUserSchema,
+  target: projectMembershipUserSchema,
+  fromStatus: membershipStatusSchema.nullable(),
+  toStatus: membershipStatusSchema.nullable(),
+  fromRoleCodes: z.array(z.string()),
+  toRoleCodes: z.array(z.string()),
+  createdAt: z.iso.datetime(),
+});
+
+export const projectAuditLogListResponseSchema = z.object({
+  project: projectSummarySchema,
+  items: z.array(projectAuditLogItemSchema),
+  page: z.object({
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+    limit: z.number().int().min(1).max(50),
+  }),
+});
+
 export type ProjectSlugParams = z.infer<typeof projectSlugParamsSchema>;
 export type ProjectMembershipParams = z.infer<typeof projectMembershipParamsSchema>;
 export type ListProjectMembershipsQuery = z.infer<typeof listProjectMembershipsQuerySchema>;
@@ -92,3 +131,5 @@ export type ReplaceProjectMembershipRolesRequest = z.infer<
 export type ProjectAccessResponse = z.infer<typeof projectAccessResponseSchema>;
 export type ProjectMembershipResponse = z.infer<typeof projectMembershipResponseSchema>;
 export type ProjectMembershipListResponse = z.infer<typeof projectMembershipListResponseSchema>;
+export type ListProjectAuditLogsQuery = z.infer<typeof listProjectAuditLogsQuerySchema>;
+export type ProjectAuditLogListResponse = z.infer<typeof projectAuditLogListResponseSchema>;

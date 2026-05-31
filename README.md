@@ -15,14 +15,14 @@ product model for this service.
 The repository already includes the initial auth and project-membership
 surface on top of the Fastify + TypeScript base, environment validation,
 Prisma setup, health checks, and quality tooling. Broader admin tooling,
-membership audit history reads, OpenClaw admin operations, and MCP tools
-remain future steps.
+OpenClaw admin operations, and MCP tools remain future steps.
 
 Current design references:
 
 - [ADR 0002: Adopt Session-Based Portfolio Identity](./docs/adrs/0002-adopt-session-based-portfolio-identity.md)
 - [ADR 0003: Define Initial Identity Data Model](./docs/adrs/0003-define-initial-identity-data-model.md)
 - [ADR 0004: Record Project Membership Audit Logs](./docs/adrs/0004-record-project-membership-audit-logs.md)
+- [ADR 0005: Expose Project Membership Audit Read API](./docs/adrs/0005-expose-project-membership-audit-read-api.md)
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
 
@@ -35,6 +35,8 @@ Current implementation highlights:
 - Admin-only membership listing, admission, lifecycle management, and role
   replacement within a project.
 - Structured audit logging for successful project membership mutations.
+- Admin-only membership audit history reads with `GET /projects/:slug/audit-logs`,
+  including action/target/membership filtering and cursor pagination.
 - Project-scoped membership and access endpoints are blocked when the target
   project is disabled.
 

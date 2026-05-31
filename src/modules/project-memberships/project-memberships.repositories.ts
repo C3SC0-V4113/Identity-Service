@@ -75,6 +75,31 @@ const membershipListSelect = {
   },
 } satisfies Prisma.ProjectMembershipSelect;
 
+const auditLogListSelect = {
+  id: true,
+  action: true,
+  membershipId: true,
+  fromStatus: true,
+  toStatus: true,
+  fromRoleCodes: true,
+  toRoleCodes: true,
+  createdAt: true,
+  actorUser: {
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+    },
+  },
+  targetUser: {
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+    },
+  },
+} satisfies Prisma.ProjectMembershipAuditLogSelect;
+
 export async function findProjectBySlug(prisma: PrismaDbClient, slug: string) {
   return prisma.project.findUnique({
     where: {
@@ -328,6 +353,62 @@ export async function createProjectMembershipAuditLog(
       fromRoleCodes: [...input.fromRoleCodes],
       toRoleCodes: [...input.toRoleCodes],
     },
+  });
+}
+
+export type ProjectAuditLogListRecord = Awaited<ReturnType<typeof listAuditLogsByProject>>[number];
+
+export async function listAuditLogsByProject(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    limit: number;
+    action?: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED';
+    targetUserId?: string;
+    membershipId?: string;
+    cursor?: {
+      createdAt: Date;
+      id: string;
+    };
+  },
+) {
+  const where: Prisma.ProjectMembershipAuditLogWhereInput = {
+    projectId: input.projectId,
+  };
+
+  if (input.action !== undefined) {
+    where.action = input.action;
+  }
+
+  if (input.targetUserId !== undefined) {
+    where.targetUserId = input.targetUserId;
+  }
+
+  if (input.membershipId !== undefined) {
+    where.membershipId = input.membershipId;
+  }
+
+  if (input.cursor !== undefined) {
+    where.OR = [
+      {
+        createdAt: {
+          lt: input.cursor.createdAt,
+        },
+      },
+      {
+        createdAt: input.cursor.createdAt,
+        id: {
+          lt: input.cursor.id,
+        },
+      },
+    ];
+  }
+
+  return prisma.projectMembershipAuditLog.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: input.limit,
+    select: auditLogListSelect,
   });
 }
 

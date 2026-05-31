@@ -15,9 +15,11 @@
   `ProjectMembershipRole`.
 - Project membership audit logs persist structured diffs for successful
   administrative HTTP mutations.
+- Project membership audit history is exposed through an admin-only read API.
 - Project-scoped authorization endpoints are available:
   `GET /projects/:slug/me`,
   `GET /projects/:slug/memberships`,
+  `GET /projects/:slug/audit-logs`,
   `POST /projects/:slug/memberships`,
   `POST /projects/:slug/memberships/:userId/suspend`,
   `POST /projects/:slug/memberships/:userId/reactivate`,
@@ -37,25 +39,26 @@
 - Admin-only project member listing with pagination and filtering.
 - Membership lifecycle operations and project-disable gating.
 - Internal audit logging for project membership mutations.
+- Admin-only project membership audit history read API with filtering and
+  pagination.
 
 ## Current slice
 
-- Slice: Project membership audit logging.
+- Slice: Project membership audit history read API.
 - Status: implemented.
 - Scope delivered:
-  immutable audit rows for successful `create`, `roles replace`, `suspend`,
-  `reactivate`, and `revoke` membership mutations,
-  structured before/after diffs for membership status and role codes,
-  and transactional audit persistence coupled to the underlying membership
-  mutation.
-- Shared auth extraction completed through `src/shared/auth/session-auth.ts`
-  so future modules can reuse authenticated-session guards without importing
-  `auth.services`.
+  `GET /projects/:slug/audit-logs`, admin-only and project-scoped, returning
+  audit rows newest-first with cursor-based pagination,
+  optional filters by `action`, `targetUserId`, and `membershipId`,
+  response items exposing the action, actor, target, membership id, the
+  before/after status and role-code diffs, and the creation timestamp.
+- Read-only over the existing `ProjectMembershipAuditLog` data: no schema or
+  migration change, no `reason` field, and no audit write/update/delete surface.
+- Reuses the existing project/admin guards and the membership-list cursor
+  helpers, keeping authorization and pagination consistent across the module.
 
 ## Next slices
 
-- Expose membership audit history through a project-admin read API when a
-  concrete UX or operator flow is defined.
 - Define admin UX or operational tooling beyond local bootstrap scripts.
 - Decide whether revoked memberships should eventually support first-class
   readmission through HTTP or a future operational flow.
@@ -79,7 +82,10 @@
 - Membership revocation is terminal in the current HTTP surface. Revoked
   memberships are not reactivated or readmitted through the API yet.
 - Membership audit logging persists only successful administrative HTTP
-  mutations and does not yet expose a read API or `reason` field.
+  mutations and does not yet capture a `reason` field.
+- Membership audit history is exposed read-only to project admins through
+  `GET /projects/:slug/audit-logs`. The audit trail remains immutable: there is
+  no write, update, or delete surface over audit rows.
 
 ## Operational notes
 
@@ -111,7 +117,7 @@
 
 - Should membership metadata get a first-class contract soon, or remain opaque
   until an explicit use case appears?
-- Should membership audit history get a first-class admin read API soon, or
-  remain internal until a concrete operator flow appears?
+- Should the audit read API eventually gain a `reason` field and/or an export
+  or retention/pruning policy as history grows?
 - Should the service eventually support a first-class readmission flow for
   revoked memberships, or keep revocation permanently terminal?
