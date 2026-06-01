@@ -15,3 +15,5 @@ This directory contains Architecture Decision Records for `identity-service`.
 - [0003-define-initial-identity-data-model.md](./0003-define-initial-identity-data-model.md)
 - [0004-record-project-membership-audit-logs.md](./0004-record-project-membership-audit-logs.md)
 - [0005-expose-project-membership-audit-read-api.md](./0005-expose-project-membership-audit-read-api.md)
+- [0006-self-service-session-management.md](./0006-self-service-session-management.md)
+- [0007-scope-auth-to-project-and-move-session-control-to-admins.md](./0007-scope-auth-to-project-and-move-session-control-to-admins.md)

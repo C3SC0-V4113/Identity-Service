@@ -1,52 +1,130 @@
 import type { FastifyPluginCallback } from 'fastify';
 
 import { getSessionTokenFromCookie } from '../../shared/auth/session-auth.js';
-import { authResponseSchema, loginRequestSchema, registerRequestSchema } from './auth.schemas.js';
-import { getAuthenticatedUser, loginUser, logoutUser, registerUser } from './auth.services.js';
 import { getSessionCookieName, getSessionCookieOptions } from './auth.cookies.js';
+import {
+  projectAuthLoginRequestSchema,
+  projectAuthParamsSchema,
+  projectAuthRegisterRequestSchema,
+  projectAuthResponseSchema,
+  projectSessionListQuerySchema,
+  projectSessionListResponseSchema,
+  projectSessionParamsSchema,
+  registerEmailCheckRequestSchema,
+  registerEmailCheckResponseSchema,
+} from './auth.schemas.js';
+import {
+  checkRegistrationEmail,
+  getAuthenticatedUser,
+  listProjectSessionsForAdmin,
+  loginUser,
+  logoutUser,
+  registerUser,
+  revokeProjectSessionForAdmin,
+} from './auth.services.js';
 
 export const authRoutes: FastifyPluginCallback = (app, _options, done) => {
-  app.post('/auth/register', async (request, reply) => {
-    const body = registerRequestSchema.parse(request.body);
-    const result = await registerUser(app.prisma, body, {
-      ipAddress: request.ip,
-      userAgent: request.headers['user-agent'] ?? null,
+  app.post('/projects/:slug/auth/register/email-check', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
+    const body = registerEmailCheckRequestSchema.parse(request.body);
+    const result = await checkRegistrationEmail(app.prisma, {
+      projectSlug: params.slug,
+      email: body.email,
     });
+
+    return reply.status(200).send(registerEmailCheckResponseSchema.parse(result));
+  });
+
+  app.post('/projects/:slug/auth/register', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
+    const body = projectAuthRegisterRequestSchema.parse(request.body);
+    const result = await registerUser(
+      app.prisma,
+      {
+        projectSlug: params.slug,
+        body,
+      },
+      {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    );
 
     reply.setCookie(getSessionCookieName(), result.sessionToken, getSessionCookieOptions());
 
-    return reply.status(201).send(authResponseSchema.parse(result.response));
+    return reply.status(201).send(projectAuthResponseSchema.parse(result.response));
   });
 
-  app.post('/auth/login', async (request, reply) => {
-    const body = loginRequestSchema.parse(request.body);
-    const result = await loginUser(app.prisma, body, {
-      ipAddress: request.ip,
-      userAgent: request.headers['user-agent'] ?? null,
-    });
+  app.post('/projects/:slug/auth/login', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
+    const body = projectAuthLoginRequestSchema.parse(request.body);
+    const result = await loginUser(
+      app.prisma,
+      {
+        projectSlug: params.slug,
+        body,
+      },
+      {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+      },
+    );
 
     reply.setCookie(getSessionCookieName(), result.sessionToken, getSessionCookieOptions());
 
-    return reply.status(200).send(authResponseSchema.parse(result.response));
+    return reply.status(200).send(projectAuthResponseSchema.parse(result.response));
   });
 
-  app.post('/auth/logout', async (request, reply) => {
+  app.post('/projects/:slug/auth/logout', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
     const sessionToken = getSessionTokenFromCookie(request.cookies, getSessionCookieName());
 
-    await logoutUser(app.prisma, sessionToken);
+    await logoutUser(app.prisma, {
+      projectSlug: params.slug,
+      sessionToken,
+    });
 
     reply.clearCookie(getSessionCookieName(), getSessionCookieOptions());
 
     return reply.status(204).send();
   });
 
-  app.get('/auth/me', async (request, reply) => {
+  app.get('/projects/:slug/auth/me', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
     const sessionToken = getSessionTokenFromCookie(request.cookies, getSessionCookieName());
-    const result = await getAuthenticatedUser(app.prisma, sessionToken, {
+    const result = await getAuthenticatedUser(app.prisma, {
+      projectSlug: params.slug,
+      sessionToken,
       touchSession: true,
     });
 
-    return reply.status(200).send(authResponseSchema.parse(result));
+    return reply.status(200).send(projectAuthResponseSchema.parse(result));
+  });
+
+  app.get('/projects/:slug/sessions', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
+    const query = projectSessionListQuerySchema.parse(request.query);
+    const sessionToken = getSessionTokenFromCookie(request.cookies, getSessionCookieName());
+    const result = await listProjectSessionsForAdmin(app.prisma, {
+      projectSlug: params.slug,
+      sessionToken,
+      query,
+    });
+
+    return reply.status(200).send(projectSessionListResponseSchema.parse(result));
+  });
+
+  app.post('/projects/:slug/sessions/:sessionId/revoke', async (request, reply) => {
+    const params = projectSessionParamsSchema.parse(request.params);
+    const sessionToken = getSessionTokenFromCookie(request.cookies, getSessionCookieName());
+
+    await revokeProjectSessionForAdmin(app.prisma, {
+      projectSlug: params.slug,
+      sessionToken,
+      sessionId: params.sessionId,
+    });
+
+    return reply.status(204).send();
   });
 
   done();

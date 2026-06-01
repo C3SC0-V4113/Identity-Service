@@ -15,7 +15,8 @@ Related decision:
 - `User`: centralized identity record shared across connected projects.
 - `LocalCredential`: the initial local `email + password` login material for a
   user.
-- `Session`: revocable and renewable server-managed session state.
+- `Session`: revocable and renewable server-managed session state scoped to one
+  project.
 - `Project`: an application connected to the identity service.
 - `ProjectRole`: a role that exists only inside a single project.
 - `ProjectMembership`: a user's admission into a project.
@@ -27,6 +28,7 @@ Related decision:
 
 - One `User` may have zero or one `LocalCredential`.
 - One `User` may have many `Session` records.
+- One `Project` may have many `Session` records.
 - One `User` may have many `ProjectMembership` records, but only one per
   project.
 - One `Project` may define many `ProjectRole` records.
@@ -37,6 +39,10 @@ Related decision:
   target member.
 
 ## Role Scope
+
+Sessions are also project-scoped. A session issued for `other-gpt` cannot be
+used to authenticate requests for `cost-console`, even when both belong to the
+same underlying `User`.
 
 Role names can overlap across projects without meaning the same thing.
 
@@ -73,6 +79,7 @@ erDiagram
     User ||--o| LocalCredential : "has"
     User ||--o{ Session : "owns"
     User ||--o{ ProjectMembership : "joins"
+    Project ||--o{ Session : "scopes"
     Project ||--o{ ProjectRole : "defines"
     Project ||--o{ ProjectMembership : "admits"
     Project ||--o{ ProjectMembershipAuditLog : "tracks"
@@ -105,6 +112,7 @@ erDiagram
     Session {
         string id PK
         string userId FK
+        string projectId FK
         string secretHash UK
         enum status
         datetime createdAt

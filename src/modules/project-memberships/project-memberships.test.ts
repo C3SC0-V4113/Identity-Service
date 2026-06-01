@@ -1,7 +1,9 @@
+import { createHash, randomBytes } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../../app.js';
-import { authResponseSchema } from '../auth/auth.schemas.js';
+import { getSessionCookieName } from '../auth/auth.cookies.js';
 import { upsertProjectSeedData } from '../identity/bootstrap/project-seed.js';
 import {
   projectAccessResponseSchema,
@@ -77,6 +79,7 @@ describe('project membership routes', () => {
     const registeredUser = await registerUser({
       email: 'person@example.com',
       password: 'supersecret',
+      sessionProjectSlug: 'cost-console',
     });
 
     const response = await app.inject({
@@ -575,11 +578,11 @@ describe('project membership routes', () => {
       },
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({
       error: {
-        code: 'PROJECT_ADMIN_REQUIRED',
-        message: 'Project admin role required',
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
       },
     });
   });
@@ -1300,52 +1303,6 @@ describe('project membership routes', () => {
     ).toEqual([]);
   });
 
-  it('keeps auth me unchanged when a project is disabled', async () => {
-    const adminUser = await registerUser({
-      email: 'admin@example.com',
-      password: 'supersecret',
-    });
-
-    await createMembership({
-      userId: adminUser.userId,
-      projectSlug: 'other-gpt',
-      roleCodes: ['admin', 'pro'],
-    });
-    await disableProject('other-gpt');
-
-    const response = await app.inject({
-      method: 'GET',
-      url: '/auth/me',
-      headers: {
-        cookie: adminUser.cookie,
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-
-    const parsedResponse = authResponseSchema.parse(response.json());
-
-    expect(parsedResponse.user.memberships).toHaveLength(1);
-    expect(parsedResponse.user.memberships[0]).toMatchObject({
-      id: expect.any(String),
-      status: 'ACTIVE',
-      project: {
-        slug: 'other-gpt',
-        name: 'Other GPT',
-      },
-      roles: [
-        {
-          code: 'admin',
-          name: 'Admin',
-        },
-        {
-          code: 'pro',
-          name: 'Pro',
-        },
-      ],
-    });
-  });
-
   it('persists structured membership audit rows in createdAt order', async () => {
     const actorUser = await registerUser({
       email: 'actor@example.com',
@@ -1737,6 +1694,7 @@ describe('project membership routes', () => {
     const adminUser = await registerUser({
       email: 'admin@example.com',
       password: 'supersecret',
+      sessionProjectSlug: 'cost-console',
     });
     const targetUser = await registerUser({
       email: 'target@example.com',
@@ -1802,11 +1760,11 @@ describe('project membership routes', () => {
       },
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({
       error: {
-        code: 'PROJECT_ADMIN_REQUIRED',
-        message: 'Project admin role required',
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
       },
     });
   });
@@ -2170,20 +2128,34 @@ describe('project membership routes', () => {
     email: string;
     password: string;
     displayName?: string;
+    sessionProjectSlug?: string;
   }): Promise<{ userId: string; cookie: string }> {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/auth/register',
-      payload: input,
+    const user = await app.prisma.user.create({
+      data: {
+        email: input.email,
+        emailNormalized: input.email.toLowerCase(),
+        displayName: input.displayName ?? null,
+      },
+    });
+    const sessionToken = randomBytes(32).toString('base64url');
+    const project = await app.prisma.project.findUniqueOrThrow({
+      where: {
+        slug: input.sessionProjectSlug ?? 'other-gpt',
+      },
     });
 
-    expect(response.statusCode).toBe(201);
-
-    const parsedResponse = authResponseSchema.parse(response.json());
+    await app.prisma.session.create({
+      data: {
+        userId: user.id,
+        projectId: project.id,
+        secretHash: createSessionHash(sessionToken),
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
 
     return {
-      userId: parsedResponse.user.id,
-      cookie: extractCookiePair(getRequiredSessionCookie(response)),
+      userId: user.id,
+      cookie: `${getSessionCookieName()}=${sessionToken}`,
     };
   }
 
@@ -2300,22 +2272,6 @@ describe('project membership routes', () => {
   }
 });
 
-function getRequiredSessionCookie(response: {
-  headers: NodeJS.Dict<number | string | string[]>;
-}): string {
-  const setCookie = response.headers['set-cookie'];
-
-  if (setCookie === undefined) {
-    throw new Error('Expected a set-cookie header');
-  }
-
-  if (Array.isArray(setCookie)) {
-    return setCookie[0] ?? '';
-  }
-
-  return typeof setCookie === 'number' ? String(setCookie) : setCookie;
-}
-
-function extractCookiePair(setCookieHeader: string): string {
-  return setCookieHeader.split(';', 1)[0] ?? '';
+function createSessionHash(sessionToken: string) {
+  return createHash('sha256').update(sessionToken).digest('hex');
 }

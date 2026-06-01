@@ -70,6 +70,7 @@ model LocalCredential {
 model Session {
   id            String        @id @default(cuid())
   userId        String        @map("user_id")
+  projectId     String?       @map("project_id")
   secretHash    String        @unique(map: "sessions_secret_hash_key") @map("secret_hash") @db.Text
   status        SessionStatus @default(ACTIVE)
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -80,8 +81,11 @@ model Session {
   ipAddress     String?       @map("ip_address") @db.Text
   userAgent     String?       @map("user_agent") @db.Text
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project       Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "sessions_user_id_idx")
+  @@index([projectId], map: "sessions_project_id_idx")
+  @@index([projectId, status], map: "sessions_project_id_status_idx")
   @@index([status], map: "sessions_status_idx")
   @@index([expiresAt], map: "sessions_expires_at_idx")
   @@map("sessions")
@@ -96,6 +100,7 @@ model Project {
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
   roles       ProjectRole[]
   memberships ProjectMembership[]
+  sessions    Session[]
   membershipAuditLogs ProjectMembershipAuditLog[]
 
   @@map("projects")

@@ -2,7 +2,7 @@ import type { FastifyPluginCallback } from 'fastify';
 
 import {
   getSessionTokenFromCookie,
-  requireAuthenticatedSession,
+  requireAuthenticatedProjectSession,
 } from '../../shared/auth/session-auth.js';
 import { getSessionCookieName } from '../auth/auth.cookies.js';
 import {
@@ -27,11 +27,12 @@ import {
   replaceProjectMembershipRoles,
   suspendProjectMembership,
 } from './project-memberships.services.js';
+import { requireProjectBySlug } from './project-memberships.guards.js';
 
 export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, done) => {
   app.get('/projects/:slug/me', async (request, reply) => {
     const params = projectSlugParamsSchema.parse(request.params);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await getProjectAccess(app.prisma, {
       projectSlug: params.slug,
@@ -44,7 +45,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
   app.get('/projects/:slug/memberships', async (request, reply) => {
     const params = projectSlugParamsSchema.parse(request.params);
     const query = listProjectMembershipsQuerySchema.parse(request.query);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await listProjectMemberships(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -58,7 +59,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
   app.get('/projects/:slug/audit-logs', async (request, reply) => {
     const params = projectSlugParamsSchema.parse(request.params);
     const query = listProjectAuditLogsQuerySchema.parse(request.query);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await listProjectMembershipAuditLogs(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -72,7 +73,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
   app.post('/projects/:slug/memberships', async (request, reply) => {
     const params = projectSlugParamsSchema.parse(request.params);
     const body = createProjectMembershipRequestSchema.parse(request.body);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await createProjectMembership(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -85,7 +86,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
 
   app.post('/projects/:slug/memberships/:userId/suspend', async (request, reply) => {
     const params = projectMembershipParamsSchema.parse(request.params);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await suspendProjectMembership(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -98,7 +99,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
 
   app.post('/projects/:slug/memberships/:userId/reactivate', async (request, reply) => {
     const params = projectMembershipParamsSchema.parse(request.params);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await reactivateProjectMembership(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -111,7 +112,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
 
   app.post('/projects/:slug/memberships/:userId/revoke', async (request, reply) => {
     const params = projectMembershipParamsSchema.parse(request.params);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await revokeProjectMembership(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -125,7 +126,7 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
   app.put('/projects/:slug/memberships/:userId/roles', async (request, reply) => {
     const params = projectMembershipParamsSchema.parse(request.params);
     const body = replaceProjectMembershipRolesRequestSchema.parse(request.body);
-    const authenticatedSession = await requireRequestAuth(request.cookies);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
 
     const result = await replaceProjectMembershipRoles(app.prisma, {
       actorUserId: authenticatedSession.user.id,
@@ -139,8 +140,12 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
 
   done();
 
-  function requireRequestAuth(cookies: Record<string, string | undefined>) {
+  async function requireRequestAuth(
+    projectSlug: string,
+    cookies: Record<string, string | undefined>,
+  ) {
+    const project = await requireProjectBySlug(app.prisma, projectSlug);
     const sessionToken = getSessionTokenFromCookie(cookies, getSessionCookieName());
-    return requireAuthenticatedSession(app.prisma, sessionToken);
+    return requireAuthenticatedProjectSession(app.prisma, sessionToken, project.id);
   }
 };

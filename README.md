@@ -23,13 +23,20 @@ Current design references:
 - [ADR 0003: Define Initial Identity Data Model](./docs/adrs/0003-define-initial-identity-data-model.md)
 - [ADR 0004: Record Project Membership Audit Logs](./docs/adrs/0004-record-project-membership-audit-logs.md)
 - [ADR 0005: Expose Project Membership Audit Read API](./docs/adrs/0005-expose-project-membership-audit-read-api.md)
+- [ADR 0006: Self-Service Session Management](./docs/adrs/0006-self-service-session-management.md)
+- [ADR 0007: Scope Auth to Projects and Move Session Control to Project Admins](./docs/adrs/0007-scope-auth-to-project-and-move-session-control-to-admins.md)
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
 
 Current implementation highlights:
 
-- Stateful auth endpoints for register, login, logout, and session-backed
-  profile introspection.
+- Project-scoped auth endpoints under `/projects/:slug/auth/*`.
+- Two-step registration with project email check before account creation.
+- Login auto-admits an existing ecosystem user into a project with the default
+  `user` role when they do not yet have a membership there.
+- Sessions are issued per project and cannot be reused across projects.
+- Project-admin session management with `GET /projects/:slug/sessions` and
+  `POST /projects/:slug/sessions/:sessionId/revoke`.
 - Project role seeds for `other-gpt` and `cost-console`.
 - Project-scoped access introspection with `GET /projects/:slug/me`.
 - Admin-only membership listing, admission, lifecycle management, and role

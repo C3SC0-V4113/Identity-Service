@@ -12,6 +12,7 @@ type SessionAuthDbClient = {
 export interface AuthenticatedSession {
   session: {
     id: string;
+    projectId: string | null;
     status: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
     expiresAt: Date;
     user: {
@@ -96,6 +97,20 @@ export async function requireAuthenticatedSession(
     session,
     user: session.user,
   };
+}
+
+export async function requireAuthenticatedProjectSession(
+  prisma: SessionAuthDbClient,
+  sessionToken: string | null,
+  projectId: string,
+): Promise<AuthenticatedSession> {
+  const authenticatedSession = await requireAuthenticatedSession(prisma, sessionToken);
+
+  if (authenticatedSession.session.projectId !== projectId) {
+    throw unauthenticatedError();
+  }
+
+  return authenticatedSession;
 }
 
 function unauthenticatedError(): AppError {

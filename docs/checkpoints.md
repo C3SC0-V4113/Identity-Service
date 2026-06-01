@@ -3,11 +3,20 @@
 ## Current system state
 
 - Runtime stack: Fastify + TypeScript + Prisma + PostgreSQL + Zod + Vitest.
-- Session auth is stateful and cookie-based with an opaque `httpOnly` cookie
-  backed by `Session.secretHash`.
-- Public auth endpoints are available:
-  `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`,
-  `GET /auth/me`.
+- Session auth is stateful, cookie-based, and project-scoped through
+  `Session.projectId`.
+- Public auth endpoints are available under `/projects/:slug/auth/*`:
+  `POST /register/email-check`, `POST /register`, `POST /login`,
+  `POST /logout`, `GET /me`.
+- Registration is project-scoped and two-step:
+  email check first, then account creation only for new ecosystem users.
+- Login auto-creates a base `ACTIVE` membership with the project role code
+  `user` when an existing ecosystem user signs into a project for the first
+  time.
+- Normal users cannot list or revoke their other sessions.
+- Project admins can list and revoke sessions inside their own project through
+  `GET /projects/:slug/sessions` and
+  `POST /projects/:slug/sessions/:sessionId/revoke`.
 - Project bootstrap data is seeded for:
   `other-gpt` with roles `user`, `pro`, `admin`;
   `cost-console` with roles `user`, `admin`.
@@ -30,32 +39,31 @@
 
 - Service foundation with Fastify, TypeScript, env validation, logging,
   Prisma, health checks, linting, and test tooling.
-- Basic auth with register, login, logout, and current-user session
-  introspection.
-- Identity schema for users, credentials, sessions, projects, project roles,
-  memberships, and membership-role joins.
+- Identity schema for users, credentials, project-scoped sessions, projects,
+  project roles, memberships, and membership-role joins.
 - Seed bootstrap for initial projects and project roles.
+- Project-scoped auth with register email check, register, login, logout, and
+  current-user introspection.
 - Project-scoped access introspection and admin-only membership management.
 - Admin-only project member listing with pagination and filtering.
 - Membership lifecycle operations and project-disable gating.
 - Internal audit logging for project membership mutations.
 - Admin-only project membership audit history read API with filtering and
   pagination.
+- Admin-only project session listing and revocation.
 
 ## Current slice
 
-- Slice: Project membership audit history read API.
+- Slice: project-scoped auth and session control.
 - Status: implemented.
 - Scope delivered:
-  `GET /projects/:slug/audit-logs`, admin-only and project-scoped, returning
-  audit rows newest-first with cursor-based pagination,
-  optional filters by `action`, `targetUserId`, and `membershipId`,
-  response items exposing the action, actor, target, membership id, the
-  before/after status and role-code diffs, and the creation timestamp.
-- Read-only over the existing `ProjectMembershipAuditLog` data: no schema or
-  migration change, no `reason` field, and no audit write/update/delete surface.
-- Reuses the existing project/admin guards and the membership-list cursor
-  helpers, keeping authorization and pagination consistent across the module.
+  project-scoped `/projects/:slug/auth/*` endpoints, project-bound session
+  validation, two-step registration, auto-admission to the base `user` role on
+  first successful login to a project, and admin-only project session
+  management.
+- Migration note:
+  legacy global sessions are revoked during schema migration with reason
+  `LEGACY_GLOBAL_SESSION`.
 
 ## Next slices
 
@@ -66,6 +74,15 @@
 ## Closed decisions
 
 - Authorization is project-scoped only. There is no global admin role.
+- Sessions are issued and validated per project; a session from one project does
+  not authenticate another project.
+- Registration is two-step and project-scoped. Existing ecosystem emails are
+  redirected to login rather than re-registered.
+- The default self-service role is the project role code `user`.
+- Successful login may auto-create a missing membership in the current project,
+  but it never reactivates `SUSPENDED` or `REVOKED` memberships.
+- Normal users can only end their current project session through logout.
+- Project admins can list and revoke sessions only inside their own project.
 - Membership admin operations require an `ACTIVE` membership with the
   project-local `admin` role.
 - Role validation is always scoped by `(projectId, code)`, so shared role codes
@@ -80,7 +97,7 @@
 - The API must not allow a project to lose its last `ACTIVE` admin through
   lifecycle operations or role replacement.
 - Membership revocation is terminal in the current HTTP surface. Revoked
-  memberships are not reactivated or readmitted through the API yet.
+  memberships are not reactivated or readmitted through the API.
 - Membership audit logging persists only successful administrative HTTP
   mutations and does not yet capture a `reason` field.
 - Membership audit history is exposed read-only to project admins through
@@ -108,7 +125,8 @@
   ```
 
 - The bootstrap script expects the user to exist already. Create the user first
-  through `POST /auth/register` or direct local DB setup before running it.
+  through `POST /projects/:slug/auth/register` or direct local DB setup before
+  running it.
 - The bootstrap script is idempotent for the selected projects. It ensures an
   `ACTIVE` membership and the `admin` role for the target user without creating
   duplicate assignments.
@@ -121,3 +139,6 @@
   or retention/pruning policy as history grows?
 - Should the service eventually support a first-class readmission flow for
   revoked memberships, or keep revocation permanently terminal?
+- Should project admins eventually gain visibility into session history
+  (revoked/expired rows only) or bulk revocation flows, or remain limited to
+  direct per-session actions until a concrete use case appears?
