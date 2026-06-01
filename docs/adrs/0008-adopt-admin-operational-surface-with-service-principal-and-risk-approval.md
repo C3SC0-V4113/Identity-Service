@@ -35,7 +35,8 @@ project-admin surface, which remains the human-facing path.
 - Make every administrative mutation reconstructable from an append-only audit
   trail keyed by `operationId` and `correlationId`.
 - Prevent duplicate side effects from channel/chat retries via idempotency.
-- Separate request from approval for high-risk actions, with no self-approval.
+- Require a deliberate two-step confirmation before a high-risk action takes
+  effect (a guard against one-shot sensitive changes), not a two-person rule.
 - Reuse existing membership and session service logic rather than reimplementing
   it behind the new surface.
 
@@ -94,6 +95,12 @@ authority the portfolio asked for.
 - Minimum `status` values: `completed`, `pending_approval`, `denied`, `failed`.
 - `idempotencyKey` is unique per `(servicePrincipalId, idempotencyKey)` so a
   retried call returns the original outcome instead of re-applying side effects.
+  A `FAILED` outcome applied no side effect, so retrying with the same key
+  re-executes (reusing the same operation row and appending to its audit
+  history); `COMPLETED`/`PENDING_APPROVAL`/`DENIED` outcomes are replayed. A key
+  is therefore scoped to one logical request: reusing the same key for a
+  _different_ operation is rejected with `409 ADMIN_IDEMPOTENCY_KEY_REUSED`, so
+  callers must use a unique key per distinct request.
 
 ### Operation family
 
@@ -120,10 +127,13 @@ envelope, idempotency, risk policy, approval, and audit around that logic.
   `banUser` in any scope, `readmitProjectMembership`, and anything a policy marks
   `high_risk`. `identity-service` decides the final risk and may escalate even
   when the operation name is the same.
-- `decideApproval` is performed by a second operator. The requester cannot
-  self-approve (`approvedByUserId != requestedByUserId`). Approvals expire by
-  default after `24h`, and the action is revalidated against current state
-  before execution.
+- `decideApproval` is a deliberate second call that confirms (approve) or
+  cancels (reject) the pending action — a two-step guard, not a two-person rule.
+  The portfolio runs a single `openclaw-ops` bot, so the same operator may
+  confirm their own request; the security value is the mandatory second
+  deliberate step before a sensitive change applies. Approvals expire by default
+  after `24h`, and the action is revalidated against current state before
+  execution.
 
 ### Operation state
 
@@ -207,10 +217,19 @@ The slice is documented in full here and delivered incrementally:
    `listPendingApprovals`), and the first direct low-risk mutation
    `auth.createUser`. Routes: `POST /admin/users`, `GET /admin/users`,
    `GET /admin/users/:userId/access`, `GET /admin/approvals`.
-3. **Risk + approval.** Add the risk engine, `AdminApproval` lifecycle, and the
-   remaining mutations: `assignProjectRole`, `revokeProjectAccess`,
-   `revokeSession`, `banUser`/`unbanUser`, `decideApproval`, and
-   `readmitProjectMembership`.
+3. **Risk + approval. (In progress)** Delivered the approval lifecycle: high-risk
+   operations record a `PENDING_APPROVAL` operation plus a live `AdminApproval`
+   (24h expiry) instead of executing; `decideApproval`
+   (`POST /admin/approvals/:approvalId/decide`) confirms (approve) or cancels
+   (reject) the pending action as a deliberate second step — the same operator may
+   confirm — enforces expiry, and runs the deferred side effect on approval via a
+   per-operation executor registry. First operations on this path: `auth.banUser` (high-risk,
+   approval-gated) and `auth.unbanUser` (low-risk, direct). The deferred executor
+   currently replays from the operation's stored targets. Pending: the remaining
+   membership/session mutations (`assignProjectRole`, `revokeProjectAccess`,
+   `revokeSession`, `readmitProjectMembership`), which reuse the project-membership
+   invariants (e.g. last-active-admin protection) and will store the execution
+   payload needed to replay role changes at approval time.
 
 - The admin surface validates input with Zod, consistent with existing modules.
 - List operations reuse the cursor-pagination shape from project memberships,

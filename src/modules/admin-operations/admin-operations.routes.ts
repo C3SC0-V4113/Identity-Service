@@ -5,17 +5,24 @@ import {
   requireServicePrincipalFromRequest,
 } from './admin-operations.guards.js';
 import {
+  adminApprovalIdParamsSchema,
   adminGetUserAccessQuerySchema,
   adminListPendingApprovalsQuerySchema,
   adminListProjectUsersQuerySchema,
   adminUserIdParamsSchema,
+  banUserOperationSchema,
   createUserOperationSchema,
+  decideApprovalSchema,
+  unbanUserOperationSchema,
 } from './admin-operations.schemas.js';
 import {
+  banUserOperation,
   createUserOperation,
+  decideApprovalOperation,
   getUserAccessStatusOperation,
   listPendingApprovalsOperation,
   listProjectUsersOperation,
+  unbanUserOperation,
 } from './admin-operations.services.js';
 
 export const adminOperationsRoutes: FastifyPluginCallback = (app, _options, done) => {
@@ -25,6 +32,39 @@ export const adminOperationsRoutes: FastifyPluginCallback = (app, _options, done
     const correlationId = getCorrelationIdFromRequest(request) ?? null;
 
     const result = await createUserOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/users/ban', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = banUserOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await banUserOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/users/unban', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = unbanUserOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await unbanUserOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/approvals/:approvalId/decide', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const params = adminApprovalIdParamsSchema.parse(request.params);
+    const body = decideApprovalSchema.parse(request.body);
+
+    const result = await decideApprovalOperation(app.prisma, principal, {
+      approvalId: params.approvalId,
+      request: body,
+    });
 
     return reply.status(200).send(result);
   });

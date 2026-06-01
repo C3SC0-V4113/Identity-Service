@@ -34,6 +34,7 @@ export async function findOperationByIdempotency(
     },
     select: {
       id: true,
+      operationName: true,
       status: true,
       approval: {
         select: {
@@ -75,6 +76,12 @@ export interface RecordTerminalOperationInput {
   errorCode: string | null;
   requestSnapshotJson: Prisma.InputJsonValue;
   resultSnapshotJson: Prisma.InputJsonValue;
+  /**
+   * When set, an existing (previously `FAILED`) operation is reused instead of
+   * inserting a new row, so a retry with the same idempotency key re-executes
+   * while keeping the append-only audit history of every attempt.
+   */
+  existingOperationId?: string;
 }
 
 /**
@@ -86,26 +93,47 @@ export async function recordTerminalOperation(
   prisma: AdminOperationsDbClient,
   input: RecordTerminalOperationInput,
 ): Promise<{ operationId: string; auditEventId: string }> {
-  const operation = await prisma.adminOperation.create({
-    data: {
-      operationName: input.operationName,
-      status: input.status,
-      servicePrincipalId: input.servicePrincipalId,
-      operatorUserId: input.operatorUserId,
-      sourceChannel: input.sourceChannel,
-      idempotencyKey: input.idempotencyKey,
-      correlationId: input.correlationId,
-      reason: input.reason,
-      ticketRef: input.ticketRef,
-      targetProjectId: input.targetProjectId,
-      targetUserId: input.targetUserId,
-      targetSessionId: input.targetSessionId,
-      errorCode: input.errorCode,
-    },
-    select: {
-      id: true,
-    },
-  });
+  const operation =
+    input.existingOperationId === undefined
+      ? await prisma.adminOperation.create({
+          data: {
+            operationName: input.operationName,
+            status: input.status,
+            servicePrincipalId: input.servicePrincipalId,
+            operatorUserId: input.operatorUserId,
+            sourceChannel: input.sourceChannel,
+            idempotencyKey: input.idempotencyKey,
+            correlationId: input.correlationId,
+            reason: input.reason,
+            ticketRef: input.ticketRef,
+            targetProjectId: input.targetProjectId,
+            targetUserId: input.targetUserId,
+            targetSessionId: input.targetSessionId,
+            errorCode: input.errorCode,
+          },
+          select: {
+            id: true,
+          },
+        })
+      : await prisma.adminOperation.update({
+          where: {
+            id: input.existingOperationId,
+          },
+          data: {
+            status: input.status,
+            operatorUserId: input.operatorUserId,
+            sourceChannel: input.sourceChannel,
+            correlationId: input.correlationId,
+            reason: input.reason,
+            ticketRef: input.ticketRef,
+            targetUserId: input.targetUserId,
+            targetSessionId: input.targetSessionId,
+            errorCode: input.errorCode,
+          },
+          select: {
+            id: true,
+          },
+        });
 
   await prisma.adminActionAudit.create({
     data: {
@@ -133,6 +161,155 @@ export async function recordTerminalOperation(
     operationId: operation.id,
     auditEventId: terminalAudit.id,
   };
+}
+
+const operationResponseSelect = {
+  id: true,
+  status: true,
+  approval: {
+    select: {
+      id: true,
+    },
+  },
+  auditEvents: {
+    where: {
+      eventType: {
+        in: [...terminalEventTypes],
+      },
+    },
+    orderBy: {
+      occurredAt: 'desc',
+    },
+    take: 1,
+    select: {
+      id: true,
+      resultSnapshotJson: true,
+    },
+  },
+} satisfies Prisma.AdminOperationSelect;
+
+export async function findOperationByIdForResponse(
+  prisma: AdminOperationsDbClient,
+  operationId: string,
+) {
+  return prisma.adminOperation.findUnique({
+    where: {
+      id: operationId,
+    },
+    select: operationResponseSelect,
+  });
+}
+
+export interface RecordPendingApprovalOperationInput {
+  operationName: string;
+  servicePrincipalId: string;
+  operatorUserId: string | null;
+  sourceChannel: string;
+  idempotencyKey: string;
+  correlationId: string | null;
+  reason: string;
+  ticketRef: string | null;
+  targetProjectId: string;
+  targetUserId: string | null;
+  targetSessionId: string | null;
+  requestSnapshotJson: Prisma.InputJsonValue;
+  pendingResultSnapshotJson: Prisma.InputJsonValue;
+  requiredApprovalLevel: string;
+  expiresAt: Date;
+}
+
+/**
+ * Persists a high-risk operation that must wait for a second-operator decision:
+ * an `AdminOperation` in `PENDING_APPROVAL`, its `REQUESTED`/`PENDING_APPROVAL`
+ * audit milestones, and the live `AdminApproval` row. No side effects are applied.
+ */
+export async function recordPendingApprovalOperation(
+  prisma: AdminOperationsDbClient,
+  input: RecordPendingApprovalOperationInput,
+): Promise<{ operationId: string; approvalId: string; auditEventId: string }> {
+  const operation = await prisma.adminOperation.create({
+    data: {
+      operationName: input.operationName,
+      status: 'PENDING_APPROVAL',
+      servicePrincipalId: input.servicePrincipalId,
+      operatorUserId: input.operatorUserId,
+      sourceChannel: input.sourceChannel,
+      idempotencyKey: input.idempotencyKey,
+      correlationId: input.correlationId,
+      reason: input.reason,
+      ticketRef: input.ticketRef,
+      targetProjectId: input.targetProjectId,
+      targetUserId: input.targetUserId,
+      targetSessionId: input.targetSessionId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  await prisma.adminActionAudit.create({
+    data: {
+      operationId: operation.id,
+      eventType: 'REQUESTED',
+      actorUserId: input.operatorUserId,
+      requestSnapshotJson: input.requestSnapshotJson,
+    },
+  });
+
+  const pendingAudit = await prisma.adminActionAudit.create({
+    data: {
+      operationId: operation.id,
+      eventType: 'PENDING_APPROVAL',
+      actorUserId: input.operatorUserId,
+      resultSnapshotJson: input.pendingResultSnapshotJson,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const approval = await prisma.adminApproval.create({
+    data: {
+      operationId: operation.id,
+      status: 'PENDING',
+      requestedByUserId: input.operatorUserId,
+      requiredApprovalLevel: input.requiredApprovalLevel,
+      expiresAt: input.expiresAt,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return {
+    operationId: operation.id,
+    approvalId: approval.id,
+    auditEventId: pendingAudit.id,
+  };
+}
+
+export async function findApprovalForDecision(prisma: AdminOperationsDbClient, approvalId: string) {
+  return prisma.adminApproval.findUnique({
+    where: {
+      id: approvalId,
+    },
+    select: {
+      id: true,
+      status: true,
+      requestedByUserId: true,
+      expiresAt: true,
+      operation: {
+        select: {
+          id: true,
+          operationName: true,
+          status: true,
+          targetProjectId: true,
+          targetUserId: true,
+          targetSessionId: true,
+        },
+      },
+    },
+  });
 }
 
 export async function listPendingApprovals(

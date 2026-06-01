@@ -14,8 +14,11 @@ product model for this service.
 
 The repository already includes the initial auth and project-membership
 surface on top of the Fastify + TypeScript base, environment validation,
-Prisma setup, health checks, and quality tooling. Broader admin tooling,
-OpenClaw admin operations, and MCP tools remain future steps.
+Prisma setup, health checks, and quality tooling. The machine-to-machine admin
+surface for `mcp-server`/`openclaw-ops` is being built incrementally (ADR 0008):
+service-principal auth, the common envelope, idempotency, and the direct-path
+operations are in place; risk-based approval and the remaining mutations are in
+progress.
 
 Current design references:
 
@@ -25,6 +28,8 @@ Current design references:
 - [ADR 0005: Expose Project Membership Audit Read API](./docs/adrs/0005-expose-project-membership-audit-read-api.md)
 - [ADR 0006: Self-Service Session Management](./docs/adrs/0006-self-service-session-management.md)
 - [ADR 0007: Scope Auth to Projects and Move Session Control to Project Admins](./docs/adrs/0007-scope-auth-to-project-and-move-session-control-to-admins.md)
+- [ADR 0008: Admin Operational Surface with Service-Principal Auth and Risk-Based Approval](./docs/adrs/0008-adopt-admin-operational-surface-with-service-principal-and-risk-approval.md)
+- [ADR 0009: Readmission of Revoked Memberships via Approval](./docs/adrs/0009-support-readmission-of-revoked-memberships-via-approval.md)
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
 
@@ -48,6 +53,16 @@ Current implementation highlights:
   including action/target/membership filtering and cursor pagination.
 - Project-scoped membership and access endpoints are blocked when the target
   project is disabled.
+- Machine-to-machine admin surface under `/admin/*`, authenticated by a
+  service-principal bearer token with a project allow-list. Operations use a
+  common envelope, an append-only operation/audit trail, and a two-step
+  confirmation guard for high-risk actions (e.g. `banUser`) via
+  `POST /admin/approvals/:approvalId/decide`.
+- Admin-surface idempotency: every mutation carries an `idempotencyKey` that is
+  unique per request. Retrying replays a successful/pending/denied result, while
+  a failed attempt re-executes on retry; reusing the key for a different
+  operation is rejected with `409 ADMIN_IDEMPOTENCY_KEY_REUSED`. Use a fresh key
+  for each distinct request.
 
 ## Local setup
 
@@ -83,7 +98,20 @@ Current implementation highlights:
    npm run db:bootstrap-admin -- --email admin@example.com --all-projects
    ```
 
-7. Start the API:
+7. Bootstrap a service principal for the machine-to-machine admin surface. The
+   bearer token is printed once; store it securely. Use `--all-projects` for the
+   global `openclaw-ops` grant, or one or more `--project <slug>` for a scoped
+   principal:
+
+   ```powershell
+   npm run db:bootstrap-service-principal -- --slug openclaw-ops --name "OpenClaw Ops" --all-projects
+   npm run db:bootstrap-service-principal -- --slug mcp-server --name "MCP Server" --project other-gpt
+   ```
+
+   Re-running for the same `--slug` rotates the secret and re-syncs the project
+   allow-list, invalidating the previous token.
+
+8. Start the API:
 
    ```powershell
    npm run dev

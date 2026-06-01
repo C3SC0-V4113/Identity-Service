@@ -26,6 +26,30 @@ export const createUserOperationSchema = adminMutationEnvelopeSchema.extend({
 
 export type CreateUserOperationRequest = z.infer<typeof createUserOperationSchema>;
 
+export const banUserOperationSchema = adminMutationEnvelopeSchema.extend({
+  payload: z.object({
+    userId: z.string().trim().min(1),
+  }),
+});
+
+export type BanUserOperationRequest = z.infer<typeof banUserOperationSchema>;
+
+export const unbanUserOperationSchema = banUserOperationSchema;
+
+export type UnbanUserOperationRequest = z.infer<typeof unbanUserOperationSchema>;
+
+export const adminApprovalIdParamsSchema = z.object({
+  approvalId: z.string().trim().min(1),
+});
+
+export const decideApprovalSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  operatorUserId: z.string().trim().min(1),
+  decisionReason: z.string().trim().min(1).optional(),
+});
+
+export type DecideApprovalRequest = z.infer<typeof decideApprovalSchema>;
+
 export const adminListProjectUsersQuerySchema = z.object({
   targetProjectId: z.string().trim().min(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),

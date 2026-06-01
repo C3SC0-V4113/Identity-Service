@@ -273,6 +273,97 @@ describe('admin operations surface', () => {
     expect(response.json().error.code).toBe('SERVICE_PRINCIPAL_PROJECT_FORBIDDEN');
   });
 
+  it('rejects reusing an idempotency key across different operations', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/admin/users',
+      headers: authHeader(scopedToken),
+      payload: {
+        targetProjectId: otherGptId,
+        reason: 'create',
+        idempotencyKey: 'shared-key',
+        channel: 'telegram',
+        payload: { email: 'shared@example.com', password: 'supersecret' },
+      },
+    });
+    expect(create.json().status).toBe('completed');
+    const createdUserId = create.json().result.user.id;
+
+    const reused = await app.inject({
+      method: 'POST',
+      url: '/admin/users/unban',
+      headers: authHeader(scopedToken),
+      payload: {
+        targetProjectId: otherGptId,
+        reason: 'unban with the same key',
+        idempotencyKey: 'shared-key',
+        channel: 'telegram',
+        payload: { userId: createdUserId },
+      },
+    });
+
+    expect(reused.statusCode).toBe(409);
+    expect(reused.json().error.code).toBe('ADMIN_IDEMPOTENCY_KEY_REUSED');
+  });
+
+  it('re-executes a failed operation when retried with the same idempotency key', async () => {
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/admin/users',
+      headers: authHeader(scopedToken),
+      payload: {
+        targetProjectId: otherGptId,
+        reason: 'first attempt with a bad role',
+        idempotencyKey: 'retry-key',
+        channel: 'telegram',
+        payload: {
+          email: 'retry@example.com',
+          password: 'supersecret',
+          roleCodes: ['does-not-exist'],
+        },
+      },
+    });
+    expect(failed.json().status).toBe('failed');
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: '/admin/users',
+      headers: authHeader(scopedToken),
+      payload: {
+        targetProjectId: otherGptId,
+        reason: 'retry with a valid role',
+        idempotencyKey: 'retry-key',
+        channel: 'telegram',
+        payload: { email: 'retry@example.com', password: 'supersecret' },
+      },
+    });
+
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json().status).toBe('completed');
+
+    const operationCount = await app.prisma.adminOperation.count({
+      where: { idempotencyKey: 'retry-key' },
+    });
+    expect(operationCount).toBe(1);
+
+    const events = await app.prisma.adminActionAudit.findMany({
+      where: { operationId: retried.json().operationId },
+      select: { eventType: true },
+      orderBy: { occurredAt: 'asc' },
+    });
+    expect(events.map((event) => event.eventType)).toEqual([
+      'REQUESTED',
+      'FAILED',
+      'REQUESTED',
+      'COMPLETED',
+    ]);
+
+    const userCount = await app.prisma.user.count({
+      where: { emailNormalized: 'retry@example.com' },
+    });
+    expect(userCount).toBe(1);
+  });
+
   it('lists pending approvals (empty in this slice)', async () => {
     const response = await app.inject({
       method: 'GET',

@@ -73,16 +73,20 @@
 
 ### Admin operational surface (MCP-facing)
 
-- Status: defined (ADR 0008); machine-identity foundation and the direct-path
-  surface implemented, risk/approval in progress. Delivered: `ServicePrincipal` +
-  project allow-list, `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema,
-  bearer-token machine auth, the service-principal bootstrap script, and the
-  `/admin/*` surface with the common envelope, idempotent replay, append-only
-  audit, the read operations (`listProjectUsers`, `getUserAccessStatus`,
-  `listPendingApprovals`) and the first low-risk mutation `auth.createUser`.
-  Pending: the risk engine, `AdminApproval` lifecycle, and the remaining
-  mutations (`assignProjectRole`, `revokeProjectAccess`, `revokeSession`,
-  `banUser`/`unbanUser`, `decideApproval`, `readmitProjectMembership`).
+- Status: defined (ADR 0008); foundation, direct-path surface, and the approval
+  lifecycle implemented; remaining membership/session mutations pending.
+  Delivered: `ServicePrincipal` + project allow-list,
+  `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema, bearer-token machine
+  auth, the service-principal bootstrap script, the `/admin/*` surface with the
+  common envelope, idempotent replay, append-only audit, reads (`listProjectUsers`,
+  `getUserAccessStatus`, `listPendingApprovals`), the low-risk mutations
+  `auth.createUser` and `auth.unbanUser`, and the approval lifecycle:
+  `auth.banUser` (high-risk → `pending_approval`) and `decideApproval`
+  (approve/reject as a two-step confirmation guard — the same operator may
+  confirm — 24h expiry, deferred execution on approval). Pending:
+  `assignProjectRole`, `revokeProjectAccess`,
+  `revokeSession`, and `readmitProjectMembership` (need the project-membership
+  invariants and a stored execution payload for approval-time replay).
 - Scope: a machine-to-machine administrative surface, separate from the
   cookie-based project-admin endpoints, that `mcp-server`/`openclaw-ops` consume.
   `identity-service` stays the single authority for authorization, approval, and
@@ -111,8 +115,9 @@
   `AdminApproval` (default `24h` expiry).
 - Risk policy: reads and low-risk mutations execute directly; high-risk
   (`assignProjectRole` to admin, mass `revokeSession`, `banUser`, `readmit`)
-  create a pending approval; a second operator decides, the requester cannot
-  self-approve, and state is revalidated before execution.
+  create a pending approval that a deliberate second `decideApproval` call
+  confirms or rejects (a two-step guard, not a two-person rule — the same
+  operator may confirm); state is revalidated before execution.
 
 ### Revoked membership readmission
 
@@ -173,9 +178,18 @@
   append-only audit event reconstructable by `operationId`/`correlationId`;
   request/result snapshots are stored redacted of secrets.
 - High-risk admin operations (`assignProjectRole` to admin, mass `revokeSession`,
-  `banUser`, `readmit`) require a prior approval; the requester cannot
-  self-approve, approvals expire by default after `24h`, and the action is
+  `banUser`, `readmit`) require a deliberate confirmation step via `decideApproval`
+  before they take effect. This is a two-step guard, not a two-person rule: the
+  portfolio runs a single `openclaw-ops` bot, so the same operator may confirm
+  their own request. Approvals expire by default after `24h`, and the action is
   revalidated against current state before execution.
+- Admin-surface idempotency: `idempotencyKey` is scoped to one logical request,
+  unique per `(servicePrincipalId, idempotencyKey)`. Retrying replays the stored
+  outcome for `COMPLETED`/`PENDING_APPROVAL`/`DENIED`, but a `FAILED` outcome
+  (no side effect applied) re-executes on retry, reusing the same operation row
+  and appending to its audit history. Reusing the key for a _different_ operation
+  is rejected with `409 ADMIN_IDEMPOTENCY_KEY_REUSED`. Callers use a unique key
+  per distinct request.
 
 ## Operational notes
 

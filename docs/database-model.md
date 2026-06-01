@@ -33,7 +33,7 @@ Related decision:
 - `AdminActionAudit`: append-only milestone events for an admin operation, with
   redacted request/result snapshots.
 - `AdminApproval`: live approval state (at most one per operation) for high-risk
-  actions that require a second operator.
+  actions that require a deliberate confirmation step before they take effect.
 
 ## Cardinality Rules
 
@@ -88,7 +88,8 @@ allow-list.
 Each operation is anchored by one `AdminOperation` row, which carries the
 idempotency key (so retries resolve to the original outcome). Milestone events
 are appended to `AdminActionAudit`, and high-risk operations hold a single live
-`AdminApproval` until a second operator decides. This trail is distinct from
+`AdminApproval` until they are confirmed through `decideApproval`. This trail is
+distinct from
 `ProjectMembershipAuditLog`, which keeps tracking cookie-surface membership
 mutations (now including the `READMITTED` action).
 

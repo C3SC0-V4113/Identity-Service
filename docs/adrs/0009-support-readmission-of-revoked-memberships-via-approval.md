@@ -38,9 +38,10 @@ Readmission of a `REVOKED` membership is a first-class administrative operation,
   project default self-service role (`user`) unless an explicit role set is
   provided in the operation `payload`.
 - It is classified `high_risk`, so it always creates an `AdminApproval` and
-  applies no side effects until a second operator decides. The requester cannot
-  self-approve, and the membership state is revalidated before execution (a
-  membership no longer `REVOKED` at decision time fails the operation).
+  applies no side effects until the action is confirmed through `decideApproval`
+  (a deliberate two-step guard; the same operator may confirm). The membership
+  state is revalidated before execution (a membership no longer `REVOKED` at
+  decision time fails the operation).
 - It records a new `ProjectMembershipAuditLog` action, `READMITTED`, with the
   `fromStatus`/`toStatus` and role transition, in addition to the
   `AdminActionAudit` milestones emitted by the admin surface.
@@ -56,7 +57,7 @@ approval-gated administrative operation, never implicitly.
 ### Positive
 
 - Operators can recover from mistaken or stale revocations with a full audit and
-  a second-operator check.
+  a deliberate two-step confirmation.
 - Readmission is attributable end to end via `operationId` and the `READMITTED`
   membership audit row.
 

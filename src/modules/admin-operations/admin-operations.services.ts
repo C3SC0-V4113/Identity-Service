@@ -19,8 +19,11 @@ import {
 import type { AdminTargetProject } from './admin-operations.guards.js';
 import { requireTargetProjectById } from './admin-operations.guards.js';
 import {
+  findApprovalForDecision,
+  findOperationByIdForResponse,
   findOperationByIdempotency,
   listPendingApprovals,
+  recordPendingApprovalOperation,
   recordTerminalOperation,
 } from './admin-operations.repositories.js';
 import type { AdminOperationStatusValue } from './admin-operations.repositories.js';
@@ -31,7 +34,10 @@ import type {
   AdminMutationEnvelope,
   AdminMutationResponse,
   AdminOperationResponseStatus,
+  BanUserOperationRequest,
   CreateUserOperationRequest,
+  DecideApprovalRequest,
+  UnbanUserOperationRequest,
 } from './admin-operations.schemas.js';
 
 const responseStatusByOperationStatus: Record<
@@ -44,6 +50,8 @@ const responseStatusByOperationStatus: Record<
   FAILED: 'failed',
 };
 
+const approvalTtlMs = 24 * 60 * 60 * 1000;
+
 interface MutationExecuteResult {
   result: unknown;
   message: string;
@@ -51,13 +59,32 @@ interface MutationExecuteResult {
   targetSessionId?: string | null;
 }
 
-interface ExecuteAdminMutationParams {
+interface OperationContext {
   operationName: string;
   envelope: AdminMutationEnvelope;
   project: AdminTargetProject;
   correlationId: string | null;
+}
+
+interface ExecuteAdminMutationParams extends OperationContext {
   redactedPayload: unknown;
   execute: (tx: PrismaClient) => Promise<MutationExecuteResult>;
+}
+
+interface ApprovalGatedMutationParams extends OperationContext {
+  redactedPayload: unknown;
+  requiredApprovalLevel: string;
+  pendingMessage: string;
+  targetUserId?: string | null;
+  targetSessionId?: string | null;
+}
+
+interface PendingOperationContext {
+  id: string;
+  operationName: string;
+  targetProjectId: string | null;
+  targetUserId: string | null;
+  targetSessionId: string | null;
 }
 
 export async function createUserOperation(
@@ -149,32 +176,26 @@ async function executeAdminMutation(
     params.envelope.idempotencyKey,
   );
 
+  let retryOperationId: string | undefined;
+
   if (existing !== null) {
-    return reconstructResponse(existing);
+    if (existing.operationName !== params.operationName) {
+      throw idempotencyKeyReusedError();
+    }
+
+    // A FAILED operation applied no side effects, so a retry with the same key
+    // re-executes (reusing the same operation row); any other status replays.
+    if (existing.status !== 'FAILED') {
+      return reconstructResponse(existing);
+    }
+
+    retryOperationId = existing.id;
   }
 
   const requestSnapshotJson = buildRequestSnapshot(params.envelope, params.redactedPayload);
 
   if (!servicePrincipalCanAccessProject(principal, params.project.id)) {
-    const message = 'Service principal is not allowed to target this project';
-    const recorded = await recordTerminalOperation(prisma, {
-      ...baseOperationFields(principal, params),
-      status: 'DENIED',
-      targetUserId: null,
-      targetSessionId: null,
-      errorCode: 'SERVICE_PRINCIPAL_PROJECT_FORBIDDEN',
-      requestSnapshotJson,
-      resultSnapshotJson: { message, result: null } as unknown as Prisma.InputJsonValue,
-    });
-
-    return {
-      status: 'denied',
-      operationId: recorded.operationId,
-      approvalId: null,
-      auditEventId: recorded.auditEventId,
-      message,
-      result: null,
-    };
+    return recordDeniedResponse(prisma, principal, params, requestSnapshotJson, retryOperationId);
   }
 
   try {
@@ -192,6 +213,7 @@ async function executeAdminMutation(
           message: output.message,
           result: output.result,
         } as unknown as Prisma.InputJsonValue,
+        existingOperationId: retryOperationId,
       });
 
       return {
@@ -231,6 +253,7 @@ async function executeAdminMutation(
         message: error.message,
         result: null,
       } as unknown as Prisma.InputJsonValue,
+      existingOperationId: retryOperationId,
     });
 
     return {
@@ -244,20 +267,423 @@ async function executeAdminMutation(
   }
 }
 
-function baseOperationFields(
-  principal: AuthenticatedServicePrincipal,
-  params: ExecuteAdminMutationParams,
-) {
+function baseOperationFields(principal: AuthenticatedServicePrincipal, ctx: OperationContext) {
   return {
-    operationName: params.operationName,
+    operationName: ctx.operationName,
     servicePrincipalId: principal.id,
-    operatorUserId: params.envelope.operatorUserId ?? null,
-    sourceChannel: params.envelope.channel,
-    idempotencyKey: params.envelope.idempotencyKey,
-    correlationId: params.correlationId,
-    reason: params.envelope.reason,
-    ticketRef: params.envelope.ticketRef ?? null,
-    targetProjectId: params.project.id,
+    operatorUserId: ctx.envelope.operatorUserId ?? null,
+    sourceChannel: ctx.envelope.channel,
+    idempotencyKey: ctx.envelope.idempotencyKey,
+    correlationId: ctx.correlationId,
+    reason: ctx.envelope.reason,
+    ticketRef: ctx.envelope.ticketRef ?? null,
+    targetProjectId: ctx.project.id,
+  };
+}
+
+async function recordDeniedResponse(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  ctx: OperationContext,
+  requestSnapshotJson: Prisma.InputJsonValue,
+  existingOperationId?: string,
+): Promise<AdminMutationResponse> {
+  const message = 'Service principal is not allowed to target this project';
+  const recorded = await recordTerminalOperation(prisma, {
+    ...baseOperationFields(principal, ctx),
+    status: 'DENIED',
+    targetUserId: null,
+    targetSessionId: null,
+    errorCode: 'SERVICE_PRINCIPAL_PROJECT_FORBIDDEN',
+    requestSnapshotJson,
+    resultSnapshotJson: { message, result: null } as unknown as Prisma.InputJsonValue,
+    existingOperationId,
+  });
+
+  return {
+    status: 'denied',
+    operationId: recorded.operationId,
+    approvalId: null,
+    auditEventId: recorded.auditEventId,
+    message,
+    result: null,
+  };
+}
+
+/**
+ * High-risk path: instead of executing now, records a `PENDING_APPROVAL`
+ * operation plus its live `AdminApproval` and returns a `pending_approval`
+ * envelope. The side effect runs later through `decideApprovalOperation`.
+ */
+async function runApprovalGatedMutation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  params: ApprovalGatedMutationParams,
+): Promise<AdminMutationResponse> {
+  const existing = await findOperationByIdempotency(
+    prisma,
+    principal.id,
+    params.envelope.idempotencyKey,
+  );
+
+  if (existing !== null) {
+    return replayExistingOperation(existing, params.operationName);
+  }
+
+  const requestSnapshotJson = buildRequestSnapshot(params.envelope, params.redactedPayload);
+
+  if (!servicePrincipalCanAccessProject(principal, params.project.id)) {
+    return recordDeniedResponse(prisma, principal, params, requestSnapshotJson);
+  }
+
+  const recorded = await recordPendingApprovalOperation(prisma, {
+    ...baseOperationFields(principal, params),
+    targetUserId: params.targetUserId ?? null,
+    targetSessionId: params.targetSessionId ?? null,
+    requestSnapshotJson,
+    pendingResultSnapshotJson: {
+      message: params.pendingMessage,
+      result: null,
+    } as unknown as Prisma.InputJsonValue,
+    requiredApprovalLevel: params.requiredApprovalLevel,
+    expiresAt: new Date(Date.now() + approvalTtlMs),
+  });
+
+  return {
+    status: 'pending_approval',
+    operationId: recorded.operationId,
+    approvalId: recorded.approvalId,
+    auditEventId: recorded.auditEventId,
+    message: params.pendingMessage,
+    result: null,
+  };
+}
+
+type ApprovalExecutor = (
+  tx: PrismaClient,
+  operation: PendingOperationContext,
+) => Promise<{ result: unknown; message: string }>;
+
+const approvalExecutors: Record<string, ApprovalExecutor> = {
+  'auth.banUser': async (tx, operation) => {
+    if (operation.targetUserId === null) {
+      throw new AppError('Operation is missing a target user', {
+        statusCode: 500,
+        code: 'ADMIN_OPERATION_TARGET_MISSING',
+      });
+    }
+
+    const user = await tx.user.update({
+      where: { id: operation.targetUserId },
+      data: { status: 'BANNED', bannedAt: new Date() },
+      select: { id: true, email: true, status: true },
+    });
+
+    return { result: { user }, message: 'User banned' };
+  },
+};
+
+export async function banUserOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: BanUserOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+
+  const user = await prisma.user.findUnique({
+    where: { id: request.payload.userId },
+    select: { id: true },
+  });
+
+  if (user === null) {
+    throw new AppError('User not found', {
+      statusCode: 404,
+      code: 'USER_NOT_FOUND',
+    });
+  }
+
+  return runApprovalGatedMutation(prisma, principal, {
+    operationName: 'auth.banUser',
+    envelope: request,
+    project,
+    correlationId,
+    redactedPayload: { userId: request.payload.userId },
+    requiredApprovalLevel: 'confirmation',
+    targetUserId: request.payload.userId,
+    pendingMessage: 'Ban requested; awaiting confirmation',
+  });
+}
+
+export async function unbanUserOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: UnbanUserOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+
+  return executeAdminMutation(prisma, principal, {
+    operationName: 'auth.unbanUser',
+    envelope: request,
+    project,
+    correlationId,
+    redactedPayload: { userId: request.payload.userId },
+    execute: async (tx) => {
+      const existing = await tx.user.findUnique({
+        where: { id: request.payload.userId },
+        select: { id: true },
+      });
+
+      if (existing === null) {
+        throw new AppError('User not found', {
+          statusCode: 404,
+          code: 'USER_NOT_FOUND',
+        });
+      }
+
+      const user = await tx.user.update({
+        where: { id: request.payload.userId },
+        data: { status: 'ACTIVE', bannedAt: null },
+        select: { id: true, email: true, status: true },
+      });
+
+      return { result: { user }, message: 'User unbanned', targetUserId: user.id };
+    },
+  });
+}
+
+export async function decideApprovalOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  input: { approvalId: string; request: DecideApprovalRequest },
+): Promise<AdminMutationResponse> {
+  const approval = await findApprovalForDecision(prisma, input.approvalId);
+
+  if (approval === null) {
+    throw new AppError('Approval not found', {
+      statusCode: 404,
+      code: 'ADMIN_APPROVAL_NOT_FOUND',
+    });
+  }
+
+  assertServicePrincipalProjectAccess(principal, approval.operation.targetProjectId ?? '');
+
+  if (approval.status !== 'PENDING') {
+    const resolved = await findOperationByIdForResponse(prisma, approval.operation.id);
+
+    if (resolved !== null) {
+      return reconstructResponse(resolved);
+    }
+  }
+
+  if (approval.expiresAt.getTime() <= Date.now()) {
+    return resolveExpiredApproval(prisma, approval.id, approval.operation.id);
+  }
+
+  if (input.request.decision === 'reject') {
+    return rejectApproval(prisma, {
+      approvalId: approval.id,
+      operationId: approval.operation.id,
+      operatorUserId: input.request.operatorUserId,
+      decisionReason: input.request.decisionReason ?? null,
+    });
+  }
+
+  const executor = approvalExecutors[approval.operation.operationName];
+
+  if (executor === undefined) {
+    throw new AppError('No executor registered for this operation', {
+      statusCode: 500,
+      code: 'ADMIN_OPERATION_EXECUTOR_MISSING',
+    });
+  }
+
+  const operationContext: PendingOperationContext = approval.operation;
+
+  try {
+    return await prisma.$transaction(async (transactionClient: unknown) => {
+      const tx = transactionClient as unknown as PrismaClient;
+      const output = await executor(tx, operationContext);
+
+      await tx.adminApproval.update({
+        where: { id: approval.id },
+        data: {
+          status: 'APPROVED',
+          approvedByUserId: input.request.operatorUserId,
+          decidedAt: new Date(),
+          decisionReason: input.request.decisionReason ?? null,
+        },
+      });
+
+      await tx.adminOperation.update({
+        where: { id: approval.operation.id },
+        data: { status: 'COMPLETED' },
+      });
+
+      await tx.adminActionAudit.create({
+        data: {
+          operationId: approval.operation.id,
+          eventType: 'APPROVED',
+          actorUserId: input.request.operatorUserId,
+          detail: input.request.decisionReason ?? null,
+        },
+      });
+
+      const terminal = await tx.adminActionAudit.create({
+        data: {
+          operationId: approval.operation.id,
+          eventType: 'COMPLETED',
+          actorUserId: input.request.operatorUserId,
+          resultSnapshotJson: {
+            message: output.message,
+            result: output.result,
+          } as unknown as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+
+      return {
+        status: 'completed' as const,
+        operationId: approval.operation.id,
+        approvalId: approval.id,
+        auditEventId: terminal.id,
+        message: output.message,
+        result: output.result,
+      };
+    });
+  } catch (error: unknown) {
+    if (!(error instanceof AppError)) {
+      throw error;
+    }
+
+    const terminal = await prisma.adminActionAudit.create({
+      data: {
+        operationId: approval.operation.id,
+        eventType: 'FAILED',
+        actorUserId: input.request.operatorUserId,
+        errorCode: error.code,
+        resultSnapshotJson: {
+          message: error.message,
+          result: null,
+        } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+
+    await prisma.adminOperation.update({
+      where: { id: approval.operation.id },
+      data: { status: 'FAILED', errorCode: error.code },
+    });
+
+    return {
+      status: 'failed',
+      operationId: approval.operation.id,
+      approvalId: approval.id,
+      auditEventId: terminal.id,
+      message: error.message,
+      result: null,
+    };
+  }
+}
+
+async function rejectApproval(
+  prisma: PrismaClient,
+  input: {
+    approvalId: string;
+    operationId: string;
+    operatorUserId: string;
+    decisionReason: string | null;
+  },
+): Promise<AdminMutationResponse> {
+  const message = input.decisionReason ?? 'Operation rejected by approver';
+
+  const terminal = await prisma.$transaction(async (transactionClient: unknown) => {
+    const tx = transactionClient as unknown as PrismaClient;
+
+    await tx.adminApproval.update({
+      where: { id: input.approvalId },
+      data: {
+        status: 'REJECTED',
+        approvedByUserId: input.operatorUserId,
+        decidedAt: new Date(),
+        decisionReason: input.decisionReason,
+      },
+    });
+
+    await tx.adminOperation.update({
+      where: { id: input.operationId },
+      data: { status: 'DENIED' },
+    });
+
+    await tx.adminActionAudit.create({
+      data: {
+        operationId: input.operationId,
+        eventType: 'REJECTED',
+        actorUserId: input.operatorUserId,
+        detail: input.decisionReason,
+      },
+    });
+
+    return tx.adminActionAudit.create({
+      data: {
+        operationId: input.operationId,
+        eventType: 'DENIED',
+        actorUserId: input.operatorUserId,
+        resultSnapshotJson: { message, result: null } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+  });
+
+  return {
+    status: 'denied',
+    operationId: input.operationId,
+    approvalId: input.approvalId,
+    auditEventId: terminal.id,
+    message,
+    result: null,
+  };
+}
+
+async function resolveExpiredApproval(
+  prisma: PrismaClient,
+  approvalId: string,
+  operationId: string,
+): Promise<AdminMutationResponse> {
+  const message = 'Approval expired before a decision was made';
+
+  const terminal = await prisma.$transaction(async (transactionClient: unknown) => {
+    const tx = transactionClient as unknown as PrismaClient;
+
+    await tx.adminApproval.update({
+      where: { id: approvalId },
+      data: { status: 'EXPIRED', decidedAt: new Date() },
+    });
+
+    await tx.adminOperation.update({
+      where: { id: operationId },
+      data: { status: 'DENIED', errorCode: 'ADMIN_APPROVAL_EXPIRED' },
+    });
+
+    return tx.adminActionAudit.create({
+      data: {
+        operationId,
+        eventType: 'DENIED',
+        errorCode: 'ADMIN_APPROVAL_EXPIRED',
+        resultSnapshotJson: { message, result: null } as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+  });
+
+  return {
+    status: 'denied',
+    operationId,
+    approvalId,
+    auditEventId: terminal.id,
+    message,
+    result: null,
   };
 }
 
@@ -274,6 +700,33 @@ function buildRequestSnapshot(
     operatorUserId: envelope.operatorUserId ?? null,
     payload: redactedPayload,
   } as unknown as Prisma.InputJsonValue;
+}
+
+function idempotencyKeyReusedError(): AppError {
+  return new AppError(
+    'Idempotency key already used for a different operation; use a unique key per request',
+    {
+      statusCode: 409,
+      code: 'ADMIN_IDEMPOTENCY_KEY_REUSED',
+    },
+  );
+}
+
+function replayExistingOperation(
+  operation: {
+    id: string;
+    operationName: string;
+    status: AdminOperationStatusValue;
+    approval: { id: string } | null;
+    auditEvents: Array<{ id: string; resultSnapshotJson: unknown }>;
+  },
+  expectedOperationName: string,
+): AdminMutationResponse {
+  if (operation.operationName !== expectedOperationName) {
+    throw idempotencyKeyReusedError();
+  }
+
+  return reconstructResponse(operation);
 }
 
 function reconstructResponse(operation: {
