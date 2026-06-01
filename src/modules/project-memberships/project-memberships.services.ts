@@ -34,7 +34,8 @@ type ProjectMembershipAuditAction =
   | 'ROLES_REPLACED'
   | 'SUSPENDED'
   | 'REACTIVATED'
-  | 'REVOKED';
+  | 'REVOKED'
+  | 'READMITTED';
 type ProjectMembershipRolesRecord = {
   id: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';

@@ -73,7 +73,11 @@
 
 ### Admin operational surface (MCP-facing)
 
-- Status: defined (ADR 0008), not implemented.
+- Status: defined (ADR 0008); machine-identity foundation implemented, operation
+  surface in progress. Delivered: `ServicePrincipal` + project allow-list,
+  `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema, bearer-token machine
+  auth, and the service-principal bootstrap script. Pending: the `/admin/*`
+  envelope endpoints, operation family, risk policy, and approval lifecycle.
 - Scope: a machine-to-machine administrative surface, separate from the
   cookie-based project-admin endpoints, that `mcp-server`/`openclaw-ops` consume.
   `identity-service` stays the single authority for authorization, approval, and
@@ -194,6 +198,22 @@
 - The bootstrap script is idempotent for the selected projects. It ensures an
   `ACTIVE` membership and the `admin` role for the target user without creating
   duplicate assignments.
+
+- Bootstrap a global (`openclaw-ops`) service principal for the admin surface:
+
+  ```powershell
+  npm run db:bootstrap-service-principal -- --slug openclaw-ops --name "OpenClaw Ops" --all-projects
+  ```
+
+- Bootstrap a project-scoped service principal:
+
+  ```powershell
+  npm run db:bootstrap-service-principal -- --slug mcp-server --name "MCP Server" --project other-gpt
+  ```
+
+- The service-principal bootstrap prints the bearer token once; only its hash is
+  stored. Re-running for the same `--slug` rotates the secret and re-syncs the
+  project allow-list, which invalidates the previous token.
 
 ## Open questions
 

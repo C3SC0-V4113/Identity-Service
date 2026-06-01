@@ -41,6 +41,7 @@ export const membershipAuditActionSchema = z.enum([
   'SUSPENDED',
   'REACTIVATED',
   'REVOKED',
+  'READMITTED',
 ]);
 
 export const listProjectAuditLogsQuerySchema = z.object({

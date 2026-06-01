@@ -125,15 +125,28 @@ envelope, idempotency, risk policy, approval, and audit around that logic.
   default after `24h`, and the action is revalidated against current state
   before execution.
 
-### Two records of state
+### Operation state
 
-- `AdminActionAudit`: append-only audit of admin events with milestone
-  `eventType` values `REQUESTED`, `PENDING_APPROVAL`, `APPROVED`, `REJECTED`,
-  `COMPLETED`, `DENIED`, `FAILED`. Reconstructable by `operationId`,
-  `correlationId`, and `idempotencyKey`. Request/result snapshots are stored
-  redacted of secrets, tokens, and credentials.
-- `AdminApproval`: live approval state for pending and resolved actions, with an
-  expiration timestamp.
+- `AdminOperation`: the single-row anchor per operation. It carries the
+  `operationName`, the resolved `status` (`COMPLETED` | `PENDING_APPROVAL` |
+  `DENIED` | `FAILED`), the calling `servicePrincipalId`, `operatorUserId`,
+  `sourceChannel`, the targets (`targetProjectId`/`targetUserId`/
+  `targetSessionId`), `reason`, `ticketRef`, `correlationId`, `policyVersion`,
+  and `errorCode`. The `idempotencyKey` is unique here, per
+  `(servicePrincipalId, idempotencyKey)`, so a retried call resolves to the
+  original operation instead of re-applying side effects. The public
+  `operationId` is this row's id.
+- `AdminActionAudit`: append-only audit of admin events, each referencing an
+  `AdminOperation`, with milestone `eventType` values `REQUESTED`,
+  `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `COMPLETED`, `DENIED`, `FAILED`.
+  Reconstructable by `operationId` and `correlationId`. Request/result snapshots
+  are stored redacted of secrets, tokens, and credentials.
+- `AdminApproval`: live approval state (0..1 per operation) for pending and
+  resolved actions, with an expiration timestamp.
+
+The append-only audit needs a stable single-row anchor to host the idempotency
+uniqueness (audit rows are many-per-operation), which is why `AdminOperation`
+exists alongside the two records named in `platform-ai-architecture` ADR 0008.
 
 This trail is distinct from the existing `ProjectMembershipAuditLog`, which stays
 focused on membership mutations from the cookie surface.
@@ -166,20 +179,24 @@ focused on membership mutations from the cookie surface.
 
 The slice is documented in full here and delivered incrementally:
 
-1. **Schema + machine auth.** Add `ServicePrincipal` (with an `allProjects`
-   flag), `ServicePrincipalProjectScope` (join: `servicePrincipalId`,
-   `projectId`), `AdminActionAudit`, and `AdminApproval` to
-   `prisma/schema.prisma`, with a unique index on
-   `(servicePrincipalId, idempotencyKey)`. Add `READMITTED` to
-   `ProjectMembershipAuditAction` (ADR 0009) and a `BANNED -> ACTIVE` unban path
-   (`UserStatus` already has `BANNED` + `bannedAt`). Add
+1. **Schema + machine auth. (Delivered)** Added `ServicePrincipal` (with an
+   `allProjects` flag), `ServicePrincipalProjectScope` (join: `servicePrincipalId`,
+   `projectId`), `AdminOperation` (with the unique
+   `(servicePrincipalId, idempotencyKey)` index), `AdminActionAudit`, and
+   `AdminApproval` to `prisma/schema.prisma`, plus `READMITTED` on
+   `ProjectMembershipAuditAction` (ADR 0009), in migration
+   `20260601022202_add_machine_admin_operations_foundation`. (`UserStatus`
+   already has `BANNED` + `bannedAt`; the `BANNED -> ACTIVE` unban path lands with
+   the operation logic in step 3.) Added
    `src/shared/auth/service-principal-auth.ts` mirroring
    `src/shared/auth/session-auth.ts` (resolve principal by `secretHash`, require
-   `status = ACTIVE`, touch `lastUsedAt`). The admin guard enforces the
-   `targetProjectId` allow-list (`allProjects` or scope membership) before any
-   side effect. Add a service-principal bootstrap script under
-   `src/modules/identity/bootstrap/` that creates a principal (optionally
-   `--all-projects` or `--project <slug>` grants) and prints the token once.
+   `status = ACTIVE`, touch `lastUsedAt`) with `servicePrincipalCanAccessProject`
+   / `assertServicePrincipalProjectAccess` for the `targetProjectId` allow-list,
+   and `bootstrapServicePrincipal`
+   (`src/modules/identity/bootstrap/service-principal-bootstrap.ts` +
+   `prisma/bootstrap-service-principal.ts`, script
+   `npm run db:bootstrap-service-principal`) that creates/rotates a principal with
+   `--all-projects` or `--project <slug>` grants and prints the token once.
 2. **Envelope + audit + direct path.** Add `src/modules/admin-operations/`
    (`routes` / `services` / `repositories` / `schemas` / `guards`) mounted under
    a separate namespace (e.g. `/admin/*`), authenticated only by service

@@ -18,6 +18,7 @@ export default defineConfig(
             'prisma.config.ts',
             'prisma/seed.ts',
             'prisma/bootstrap-project-admin.ts',
+            'prisma/bootstrap-service-principal.ts',
             'vitest.config.ts',
           ],
         },
@@ -49,7 +50,9 @@ export default defineConfig(
       'src/modules/project-memberships/project-memberships.guards.ts',
       'src/modules/project-memberships/project-memberships.routes.ts',
       'src/modules/identity/bootstrap/project-admin-bootstrap.ts',
+      'src/modules/identity/bootstrap/service-principal-bootstrap.ts',
       'prisma/bootstrap-project-admin.ts',
+      'prisma/bootstrap-service-principal.ts',
       'src/**/*.test.ts',
     ],
     rules: {

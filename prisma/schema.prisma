@@ -34,20 +34,50 @@ enum ProjectMembershipAuditAction {
   SUSPENDED
   REACTIVATED
   REVOKED
+  READMITTED
+}
+
+enum ServicePrincipalStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AdminOperationStatus {
+  COMPLETED
+  PENDING_APPROVAL
+  DENIED
+  FAILED
+}
+
+enum AdminActionEventType {
+  REQUESTED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  COMPLETED
+  DENIED
+  FAILED
+}
+
+enum AdminApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
 }
 
 model User {
-  id              String             @id @default(cuid())
-  email           String             @db.Text
-  emailNormalized String             @unique(map: "users_email_normalized_key") @map("email_normalized") @db.Text
-  displayName     String?            @map("display_name") @db.Text
-  status          UserStatus         @default(ACTIVE)
-  bannedAt        DateTime?          @map("banned_at") @db.Timestamptz(3)
-  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
-  localCredential LocalCredential?
-  sessions        Session[]
-  memberships     ProjectMembership[]
+  id                          String                      @id @default(cuid())
+  email                       String                      @db.Text
+  emailNormalized             String                      @unique(map: "users_email_normalized_key") @map("email_normalized") @db.Text
+  displayName                 String?                     @map("display_name") @db.Text
+  status                      UserStatus                  @default(ACTIVE)
+  bannedAt                    DateTime?                   @map("banned_at") @db.Timestamptz(3)
+  createdAt                   DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                   DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  localCredential             LocalCredential?
+  sessions                    Session[]
+  memberships                 ProjectMembership[]
   membershipAuditLogsAsActor  ProjectMembershipAuditLog[] @relation("project_membership_audit_actor")
   membershipAuditLogsAsTarget ProjectMembershipAuditLog[] @relation("project_membership_audit_target")
 
@@ -92,16 +122,17 @@ model Session {
 }
 
 model Project {
-  id          String              @id @default(cuid())
-  slug        String              @unique(map: "projects_slug_key") @db.Text
-  name        String              @db.Text
-  status      ProjectStatus       @default(ACTIVE)
-  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
-  roles       ProjectRole[]
-  memberships ProjectMembership[]
-  sessions    Session[]
-  membershipAuditLogs ProjectMembershipAuditLog[]
+  id                     String                         @id @default(cuid())
+  slug                   String                         @unique(map: "projects_slug_key") @db.Text
+  name                   String                         @db.Text
+  status                 ProjectStatus                  @default(ACTIVE)
+  createdAt              DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  roles                  ProjectRole[]
+  memberships            ProjectMembership[]
+  sessions               Session[]
+  membershipAuditLogs    ProjectMembershipAuditLog[]
+  servicePrincipalScopes ServicePrincipalProjectScope[]
 
   @@map("projects")
 }
@@ -123,15 +154,15 @@ model ProjectRole {
 }
 
 model ProjectMembership {
-  id              String                  @id @default(cuid())
-  projectId       String                  @map("project_id")
-  userId          String                  @map("user_id")
-  status          MembershipStatus        @default(ACTIVE)
+  id              String                      @id @default(cuid())
+  projectId       String                      @map("project_id")
+  userId          String                      @map("user_id")
+  status          MembershipStatus            @default(ACTIVE)
   metadata        Json?
-  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
-  project         Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user            User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
   membershipRoles ProjectMembershipRole[]
   auditLogs       ProjectMembershipAuditLog[]
 
@@ -176,4 +207,99 @@ model ProjectMembershipAuditLog {
   @@index([action], map: "project_membership_audit_logs_action_idx")
   @@index([createdAt], map: "project_membership_audit_logs_created_at_idx")
   @@map("project_membership_audit_logs")
+}
+
+model ServicePrincipal {
+  id            String                         @id @default(cuid())
+  slug          String                         @unique(map: "service_principals_slug_key") @db.Text
+  name          String                         @db.Text
+  description   String?                        @db.Text
+  status        ServicePrincipalStatus         @default(ACTIVE)
+  secretHash    String                         @unique(map: "service_principals_secret_hash_key") @map("secret_hash") @db.Text
+  allProjects   Boolean                        @default(false) @map("all_projects")
+  lastUsedAt    DateTime?                      @map("last_used_at") @db.Timestamptz(3)
+  createdAt     DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  projectScopes ServicePrincipalProjectScope[]
+  operations    AdminOperation[]
+
+  @@index([status], map: "service_principals_status_idx")
+  @@map("service_principals")
+}
+
+model ServicePrincipalProjectScope {
+  servicePrincipalId String           @map("service_principal_id")
+  projectId          String           @map("project_id")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  servicePrincipal   ServicePrincipal @relation(fields: [servicePrincipalId], references: [id], onDelete: Cascade)
+  project            Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([servicePrincipalId, projectId])
+  @@index([projectId], map: "service_principal_project_scopes_project_id_idx")
+  @@map("service_principal_project_scopes")
+}
+
+model AdminOperation {
+  id                 String               @id @default(cuid())
+  operationName      String               @map("operation_name") @db.Text
+  status             AdminOperationStatus
+  servicePrincipalId String?              @map("service_principal_id")
+  operatorUserId     String?              @map("operator_user_id") @db.Text
+  sourceChannel      String?              @map("source_channel") @db.Text
+  idempotencyKey     String               @map("idempotency_key") @db.Text
+  correlationId      String?              @map("correlation_id") @db.Text
+  reason             String?              @db.Text
+  ticketRef          String?              @map("ticket_ref") @db.Text
+  targetProjectId    String?              @map("target_project_id") @db.Text
+  targetUserId       String?              @map("target_user_id") @db.Text
+  targetSessionId    String?              @map("target_session_id") @db.Text
+  policyVersion      String?              @map("policy_version") @db.Text
+  errorCode          String?              @map("error_code") @db.Text
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  servicePrincipal   ServicePrincipal?    @relation(fields: [servicePrincipalId], references: [id], onDelete: SetNull)
+  auditEvents        AdminActionAudit[]
+  approval           AdminApproval?
+
+  @@unique([servicePrincipalId, idempotencyKey], map: "admin_operations_principal_idempotency_key")
+  @@index([status], map: "admin_operations_status_idx")
+  @@index([correlationId], map: "admin_operations_correlation_id_idx")
+  @@index([createdAt], map: "admin_operations_created_at_idx")
+  @@map("admin_operations")
+}
+
+model AdminActionAudit {
+  id                  String               @id @default(cuid())
+  operationId         String               @map("operation_id")
+  eventType           AdminActionEventType @map("event_type")
+  occurredAt          DateTime             @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actorUserId         String?              @map("actor_user_id") @db.Text
+  detail              String?              @db.Text
+  requestSnapshotJson Json?                @map("request_snapshot_json")
+  resultSnapshotJson  Json?                @map("result_snapshot_json")
+  errorCode           String?              @map("error_code") @db.Text
+  operation           AdminOperation       @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@index([operationId], map: "admin_action_audits_operation_id_idx")
+  @@index([eventType], map: "admin_action_audits_event_type_idx")
+  @@index([occurredAt], map: "admin_action_audits_occurred_at_idx")
+  @@map("admin_action_audits")
+}
+
+model AdminApproval {
+  id                    String              @id @default(cuid())
+  operationId           String              @unique(map: "admin_approvals_operation_id_key") @map("operation_id")
+  status                AdminApprovalStatus @default(PENDING)
+  requestedByUserId     String?             @map("requested_by_user_id") @db.Text
+  requiredApprovalLevel String              @map("required_approval_level") @db.Text
+  approvedByUserId      String?             @map("approved_by_user_id") @db.Text
+  requestedAt           DateTime            @default(now()) @map("requested_at") @db.Timestamptz(3)
+  decidedAt             DateTime?           @map("decided_at") @db.Timestamptz(3)
+  decisionReason        String?             @map("decision_reason") @db.Text
+  expiresAt             DateTime            @map("expires_at") @db.Timestamptz(3)
+  operation             AdminOperation      @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@index([status], map: "admin_approvals_status_idx")
+  @@index([expiresAt], map: "admin_approvals_expires_at_idx")
+  @@map("admin_approvals")
 }

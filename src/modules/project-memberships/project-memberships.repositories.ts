@@ -330,7 +330,7 @@ export async function updateMembershipStatus(
 export async function createProjectMembershipAuditLog(
   prisma: PrismaDbClient,
   input: {
-    action: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED';
+    action: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED' | 'READMITTED';
     projectId: string;
     membershipId: string;
     actorUserId: string;
@@ -363,7 +363,7 @@ export async function listAuditLogsByProject(
   input: {
     projectId: string;
     limit: number;
-    action?: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED';
+    action?: 'CREATED' | 'ROLES_REPLACED' | 'SUSPENDED' | 'REACTIVATED' | 'REVOKED' | 'READMITTED';
     targetUserId?: string;
     membershipId?: string;
     cursor?: {
