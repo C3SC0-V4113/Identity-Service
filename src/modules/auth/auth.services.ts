@@ -311,6 +311,18 @@ export async function getAuthenticatedUser(
   });
 }
 
+export async function validateCurrentSession(
+  prisma: PrismaClient,
+  input: {
+    projectSlug: string;
+    sessionToken: string | null;
+  },
+): Promise<void> {
+  const project = await requireProjectBySlug(prisma, input.projectSlug);
+
+  await requireAuthenticatedProjectSession(prisma, input.sessionToken, project.id);
+}
+
 export async function listProjectSessionsForAdmin(
   prisma: PrismaClient,
   input: {

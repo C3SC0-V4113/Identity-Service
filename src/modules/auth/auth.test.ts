@@ -463,6 +463,65 @@ describe('auth routes', () => {
     expect(sessionAfterMe.lastSeenAt).not.toBeNull();
   });
 
+  it('validates the current project session with 204 for client middleware checks', async () => {
+    const cookie = await registerViaApi('other-gpt', {
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.body).toBe('');
+  });
+
+  it('does not update lastSeenAt when validating the current session', async () => {
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/projects/other-gpt/auth/register',
+      payload: {
+        email: 'person@example.com',
+        password: 'supersecret',
+      },
+    });
+
+    const cookie = extractCookiePair(getRequiredSessionCookie(registerResponse));
+    const userId = projectAuthResponseSchema.parse(registerResponse.json()).user.id;
+    const sessionBeforeValidation = await app.prisma.session.findFirstOrThrow({
+      where: {
+        userId,
+        projectId: await getProjectId('other-gpt'),
+      },
+    });
+
+    expect(sessionBeforeValidation.lastSeenAt).toBeNull();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+
+    const sessionAfterValidation = await app.prisma.session.findFirstOrThrow({
+      where: {
+        userId,
+        projectId: await getProjectId('other-gpt'),
+      },
+    });
+
+    expect(sessionAfterValidation.lastSeenAt).toBeNull();
+  });
+
   it('rejects auth me when no session cookie is present', async () => {
     const response = await app.inject({
       method: 'GET',
@@ -476,6 +535,96 @@ describe('auth routes', () => {
         message: 'Authentication required',
       },
     });
+  });
+
+  it('rejects auth session when no session cookie is present', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
+      },
+    });
+  });
+
+  it('rejects auth session when the session has been revoked', async () => {
+    const cookie = await registerViaApi('other-gpt', {
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+    const sessionId = await findCurrentProjectSessionId('other-gpt', cookie);
+
+    await app.prisma.session.update({
+      where: {
+        id: sessionId,
+      },
+      data: {
+        status: 'REVOKED',
+        revokedAt: new Date(),
+        revokedReason: 'TEST_REVOKED',
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
+      },
+    });
+  });
+
+  it('rejects auth session when the session has expired', async () => {
+    const cookie = await registerViaApi('other-gpt', {
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+    const sessionId = await findCurrentProjectSessionId('other-gpt', cookie);
+
+    await app.prisma.session.update({
+      where: {
+        id: sessionId,
+      },
+      data: {
+        expiresAt: new Date(Date.now() - 1_000),
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
+      },
+    });
+
+    const persistedSession = await app.prisma.session.findUniqueOrThrow({
+      where: {
+        id: sessionId,
+      },
+    });
+    expect(persistedSession.status).toBe('EXPIRED');
   });
 
   it('rejects auth me when the session belongs to a different project', async () => {
@@ -493,6 +642,29 @@ describe('auth routes', () => {
     });
 
     expect(response.statusCode).toBe(401);
+  });
+
+  it('rejects auth session when the session belongs to a different project', async () => {
+    const cookie = await registerViaApi('other-gpt', {
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/cost-console/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication required',
+      },
+    });
   });
 
   it('rejects auth me when the project is disabled', async () => {
@@ -515,6 +687,70 @@ describe('auth routes', () => {
       error: {
         code: 'PROJECT_DISABLED',
         message: 'Project is disabled',
+      },
+    });
+  });
+
+  it('rejects auth session when the project is disabled', async () => {
+    const cookie = await registerViaApi('other-gpt', {
+      email: 'person@example.com',
+      password: 'supersecret',
+    });
+    await disableProject('other-gpt');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'PROJECT_DISABLED',
+        message: 'Project is disabled',
+      },
+    });
+  });
+
+  it('rejects auth session when the user is banned', async () => {
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/projects/other-gpt/auth/register',
+      payload: {
+        email: 'person@example.com',
+        password: 'supersecret',
+      },
+    });
+
+    const cookie = extractCookiePair(getRequiredSessionCookie(registerResponse));
+    const userId = projectAuthResponseSchema.parse(registerResponse.json()).user.id;
+
+    await app.prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        status: 'BANNED',
+        bannedAt: new Date(),
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/other-gpt/auth/session',
+      headers: {
+        cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'USER_BANNED',
+        message: 'User is banned',
       },
     });
   });

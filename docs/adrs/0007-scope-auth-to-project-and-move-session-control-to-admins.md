@@ -40,6 +40,7 @@ Adopt project-scoped authentication routes:
 - `POST /projects/:slug/auth/login`
 - `POST /projects/:slug/auth/logout`
 - `GET /projects/:slug/auth/me`
+- `GET /projects/:slug/auth/session`
 
 Registration becomes a two-step flow. The email-check endpoint answers whether
 the email already exists in the shared identity store:
@@ -65,6 +66,13 @@ revoked during migration with reason `LEGACY_GLOBAL_SESSION`.
 Normal users no longer have a self-service "other sessions" API. The
 `/auth/sessions` endpoints are removed. A user can only end their current
 project session through `POST /projects/:slug/auth/logout`.
+
+Client middleware that only needs to know whether the current cookie-backed
+project session is still usable should call `GET /projects/:slug/auth/session`.
+That endpoint is the canonical lightweight session validator. It returns `204`
+for a valid session and reuses the normal auth failure statuses otherwise.
+`GET /projects/:slug/auth/me` remains the profile endpoint and may update
+session activity metadata.
 
 Project admins gain project-local session operations:
 
@@ -105,6 +113,8 @@ global admin role.
   legacy rows; all newly issued sessions must set it.
 - Project-scoped auth uses the shared session hash/cookie mechanism, but request
   auth now validates both the session state and the expected `projectId`.
+- `GET /projects/:slug/auth/session` intentionally does not load the profile or
+  update `lastSeenAt`; it exists for middleware/session-health checks only.
 - Admin session listing uses the same cursor-pagination shape as project
   memberships and audit logs.
 - The auth response becomes project-local: it returns the authenticated user,

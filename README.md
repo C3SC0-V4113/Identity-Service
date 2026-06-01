@@ -34,6 +34,8 @@ Current implementation highlights:
 - Two-step registration with project email check before account creation.
 - Login auto-admits an existing ecosystem user into a project with the default
   `user` role when they do not yet have a membership there.
+- `GET /projects/:slug/auth/session` is the lightweight middleware-friendly
+  endpoint for checking whether the current project session is still valid.
 - Sessions are issued per project and cannot be reused across projects.
 - Project-admin session management with `GET /projects/:slug/sessions` and
   `POST /projects/:slug/sessions/:sessionId/revoke`.

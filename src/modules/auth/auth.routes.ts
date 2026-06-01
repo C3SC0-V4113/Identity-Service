@@ -21,6 +21,7 @@ import {
   logoutUser,
   registerUser,
   revokeProjectSessionForAdmin,
+  validateCurrentSession,
 } from './auth.services.js';
 
 export const authRoutes: FastifyPluginCallback = (app, _options, done) => {
@@ -99,6 +100,18 @@ export const authRoutes: FastifyPluginCallback = (app, _options, done) => {
     });
 
     return reply.status(200).send(projectAuthResponseSchema.parse(result));
+  });
+
+  app.get('/projects/:slug/auth/session', async (request, reply) => {
+    const params = projectAuthParamsSchema.parse(request.params);
+    const sessionToken = getSessionTokenFromCookie(request.cookies, getSessionCookieName());
+
+    await validateCurrentSession(app.prisma, {
+      projectSlug: params.slug,
+      sessionToken,
+    });
+
+    return reply.status(204).send();
   });
 
   app.get('/projects/:slug/sessions', async (request, reply) => {

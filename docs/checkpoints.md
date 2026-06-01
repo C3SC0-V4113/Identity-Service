@@ -7,12 +7,15 @@
   `Session.projectId`.
 - Public auth endpoints are available under `/projects/:slug/auth/*`:
   `POST /register/email-check`, `POST /register`, `POST /login`,
-  `POST /logout`, `GET /me`.
+  `POST /logout`, `GET /me`, `GET /session`.
 - Registration is project-scoped and two-step:
   email check first, then account creation only for new ecosystem users.
 - Login auto-creates a base `ACTIVE` membership with the project role code
   `user` when an existing ecosystem user signs into a project for the first
   time.
+- `GET /projects/:slug/auth/session` is the dedicated middleware-safe session
+  validator. It returns `204` when the current project session is valid and
+  `401` when it is no longer usable.
 - Normal users cannot list or revoke their other sessions.
 - Project admins can list and revoke sessions inside their own project through
   `GET /projects/:slug/sessions` and
@@ -43,7 +46,7 @@
   project roles, memberships, and membership-role joins.
 - Seed bootstrap for initial projects and project roles.
 - Project-scoped auth with register email check, register, login, logout, and
-  current-user introspection.
+  current-user introspection plus lightweight current-session validation.
 - Project-scoped access introspection and admin-only membership management.
 - Admin-only project member listing with pagination and filtering.
 - Membership lifecycle operations and project-disable gating.
@@ -59,8 +62,9 @@
 - Scope delivered:
   project-scoped `/projects/:slug/auth/*` endpoints, project-bound session
   validation, two-step registration, auto-admission to the base `user` role on
-  first successful login to a project, and admin-only project session
-  management.
+  first successful login to a project, dedicated
+  `GET /projects/:slug/auth/session` validation for client middleware, and
+  admin-only project session management.
 - Migration note:
   legacy global sessions are revoked during schema migration with reason
   `LEGACY_GLOBAL_SESSION`.
@@ -76,6 +80,8 @@
 - Authorization is project-scoped only. There is no global admin role.
 - Sessions are issued and validated per project; a session from one project does
   not authenticate another project.
+- `GET /projects/:slug/auth/session` is the canonical client-side session check;
+  `GET /projects/:slug/auth/me` remains the profile endpoint.
 - Registration is two-step and project-scoped. Existing ecosystem emails are
   redirected to login rather than re-registered.
 - The default self-service role is the project role code `user`.
