@@ -41,6 +41,7 @@ export default defineConfig(
   {
     files: [
       'src/**/*.repositories.ts',
+      'src/modules/admin-operations/admin-operations.services.ts',
       'src/shared/auth/session-auth.ts',
       'src/shared/db/prisma.ts',
       'src/shared/db/prisma-client.ts',

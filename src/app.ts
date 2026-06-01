@@ -6,6 +6,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 
+import { adminOperationsRoutes } from './modules/admin-operations/admin-operations.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { projectMembershipRoutes } from './modules/project-memberships/project-memberships.routes.js';
@@ -34,6 +35,7 @@ export async function buildApp() {
   await app.register(requestContextPlugin);
   await app.register(authRoutes);
   await app.register(projectMembershipRoutes);
+  await app.register(adminOperationsRoutes);
   await app.register(healthRoutes);
 
   return app;

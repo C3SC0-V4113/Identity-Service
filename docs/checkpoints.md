@@ -73,11 +73,16 @@
 
 ### Admin operational surface (MCP-facing)
 
-- Status: defined (ADR 0008); machine-identity foundation implemented, operation
-  surface in progress. Delivered: `ServicePrincipal` + project allow-list,
-  `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema, bearer-token machine
-  auth, and the service-principal bootstrap script. Pending: the `/admin/*`
-  envelope endpoints, operation family, risk policy, and approval lifecycle.
+- Status: defined (ADR 0008); machine-identity foundation and the direct-path
+  surface implemented, risk/approval in progress. Delivered: `ServicePrincipal` +
+  project allow-list, `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema,
+  bearer-token machine auth, the service-principal bootstrap script, and the
+  `/admin/*` surface with the common envelope, idempotent replay, append-only
+  audit, the read operations (`listProjectUsers`, `getUserAccessStatus`,
+  `listPendingApprovals`) and the first low-risk mutation `auth.createUser`.
+  Pending: the risk engine, `AdminApproval` lifecycle, and the remaining
+  mutations (`assignProjectRole`, `revokeProjectAccess`, `revokeSession`,
+  `banUser`/`unbanUser`, `decideApproval`, `readmitProjectMembership`).
 - Scope: a machine-to-machine administrative surface, separate from the
   cookie-based project-admin endpoints, that `mcp-server`/`openclaw-ops` consume.
   `identity-service` stays the single authority for authorization, approval, and

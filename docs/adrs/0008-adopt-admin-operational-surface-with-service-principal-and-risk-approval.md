@@ -197,13 +197,19 @@ The slice is documented in full here and delivered incrementally:
    `prisma/bootstrap-service-principal.ts`, script
    `npm run db:bootstrap-service-principal`) that creates/rotates a principal with
    `--all-projects` or `--project <slug>` grants and prints the token once.
-2. **Envelope + audit + direct path.** Add `src/modules/admin-operations/`
-   (`routes` / `services` / `repositories` / `schemas` / `guards`) mounted under
-   a separate namespace (e.g. `/admin/*`), authenticated only by service
-   principal. Implement the common envelope, idempotency, append-only audit, and
-   the read + low-risk mutation operations executing directly.
-3. **Risk + approval.** Add the risk engine, `AdminApproval` lifecycle, and
-   high-risk operations including `banUser`/`unbanUser`, `decideApproval`, and
+2. **Envelope + audit + direct path. (Delivered)** Added
+   `src/modules/admin-operations/` (`routes` / `services` / `repositories` /
+   `schemas` / `guards`) mounted under `/admin/*`, authenticated only by service
+   principal (bearer token). Implemented the common mutation envelope, idempotent
+   replay keyed by `(servicePrincipalId, idempotencyKey)`, the append-only
+   `AdminActionAudit`/`AdminOperation` trail, the `denied`/`failed`/`completed`
+   outcomes, the read operations (`listProjectUsers`, `getUserAccessStatus`,
+   `listPendingApprovals`), and the first direct low-risk mutation
+   `auth.createUser`. Routes: `POST /admin/users`, `GET /admin/users`,
+   `GET /admin/users/:userId/access`, `GET /admin/approvals`.
+3. **Risk + approval.** Add the risk engine, `AdminApproval` lifecycle, and the
+   remaining mutations: `assignProjectRole`, `revokeProjectAccess`,
+   `revokeSession`, `banUser`/`unbanUser`, `decideApproval`, and
    `readmitProjectMembership`.
 
 - The admin surface validates input with Zod, consistent with existing modules.
@@ -211,6 +217,12 @@ The slice is documented in full here and delivered incrementally:
   audit logs, and admin session listing.
 - The auth tools must not expose arbitrary queries or write directly to
   PostgreSQL outside the defined operations.
+- Machine operations audit exclusively to `AdminActionAudit`/`AdminOperation`;
+  they do not write `ProjectMembershipAuditLog`. So `createUser`'s project
+  admission is visible in the admin trail (by `operationId`) but not in the
+  cookie-surface membership audit. This keeps the two trails cleanly separate per
+  the decision above; surfacing machine mutations to project admins, if needed,
+  is a later concern.
 
 ## Related Decisions
 
