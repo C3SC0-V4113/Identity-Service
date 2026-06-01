@@ -17,3 +17,5 @@ This directory contains Architecture Decision Records for `identity-service`.
 - [0005-expose-project-membership-audit-read-api.md](./0005-expose-project-membership-audit-read-api.md)
 - [0006-self-service-session-management.md](./0006-self-service-session-management.md)
 - [0007-scope-auth-to-project-and-move-session-control-to-admins.md](./0007-scope-auth-to-project-and-move-session-control-to-admins.md)
+- [0008-adopt-admin-operational-surface-with-service-principal-and-risk-approval.md](./0008-adopt-admin-operational-surface-with-service-principal-and-risk-approval.md)
+- [0009-support-readmission-of-revoked-memberships-via-approval.md](./0009-support-readmission-of-revoked-memberships-via-approval.md)

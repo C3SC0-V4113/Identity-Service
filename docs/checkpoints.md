@@ -71,9 +71,44 @@
 
 ## Next slices
 
-- Define admin UX or operational tooling beyond local bootstrap scripts.
-- Decide whether revoked memberships should eventually support first-class
-  readmission through HTTP or a future operational flow.
+### Admin operational surface (MCP-facing)
+
+- Status: defined (ADR 0008), not implemented.
+- Scope: a machine-to-machine administrative surface, separate from the
+  cookie-based project-admin endpoints, that `mcp-server`/`openclaw-ops` consume.
+  `identity-service` stays the single authority for authorization, approval, and
+  audit; callers never write to the database directly.
+- Machine identity: a new `ServicePrincipal` authenticates the surface by bearer
+  token (only the `secretHash` is persisted, like `Session.secretHash`); the
+  human operator is propagated separately as `operatorUserId`.
+- Contract: mutations use a common envelope
+  (`targetProjectId`, `reason`, `idempotencyKey`, `ticketRef?`, `channel`,
+  `payload`) and a common response
+  (`status` ∈ `completed|pending_approval|denied|failed`, `operationId`,
+  `approvalId?`, `auditEventId`, `message`, `result`). `idempotencyKey` is unique
+  per `(servicePrincipalId, idempotencyKey)`.
+- Operation family: reads `listProjectUsers`, `getUserAccessStatus`,
+  `listPendingApprovals`; mutations `createUser`, `assignProjectRole`,
+  `revokeProjectAccess`, `revokeSession`, `banUser`, `unbanUser`,
+  `readmitProjectMembership`, `decideApproval`. Side effects reuse existing
+  membership services and the admin session-revocation path.
+- State: append-only `AdminActionAudit` (milestones `REQUESTED`,
+  `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `COMPLETED`, `DENIED`, `FAILED`,
+  reconstructable by `operationId`/`correlationId`, snapshots redacted) plus live
+  `AdminApproval` (default `24h` expiry).
+- Risk policy: reads and low-risk mutations execute directly; high-risk
+  (`assignProjectRole` to admin, mass `revokeSession`, `banUser`, `readmit`)
+  create a pending approval; a second operator decides, the requester cannot
+  self-approve, and state is revalidated before execution.
+
+### Revoked membership readmission
+
+- Status: defined (ADR 0009), not implemented.
+- Scope: a high-risk `readmitProjectMembership` operation inside the admin
+  surface that transitions a membership `REVOKED -> ACTIVE` (roles reset to the
+  default `user` role unless an explicit set is supplied), gated by approval and
+  recorded with a new `READMITTED` membership audit action. The cookie surface is
+  unchanged: login still never reactivates `SUSPENDED`/`REVOKED` memberships.
 
 ## Closed decisions
 
@@ -102,13 +137,28 @@
   `Project.status = DISABLED`.
 - The API must not allow a project to lose its last `ACTIVE` admin through
   lifecycle operations or role replacement.
-- Membership revocation is terminal in the current HTTP surface. Revoked
-  memberships are not reactivated or readmitted through the API.
+- Membership revocation is terminal in the cookie-based HTTP surface and through
+  login: neither path reactivates or readmits a `REVOKED` membership. Readmission
+  is allowed only as an approval-gated administrative operation (ADR 0009), which
+  supersedes the previous "revocation is permanently terminal" stance.
 - Membership audit logging persists only successful administrative HTTP
-  mutations and does not yet capture a `reason` field.
+  mutations and does not yet capture a `reason` field. The richer admin trail
+  with `reason`/`operationId`/`correlationId` lives in the planned
+  `AdminActionAudit`, not in `ProjectMembershipAuditLog`.
 - Membership audit history is exposed read-only to project admins through
   `GET /projects/:slug/audit-logs`. The audit trail remains immutable: there is
   no write, update, or delete surface over audit rows.
+- Administrative tooling beyond local bootstrap scripts is delivered as a
+  service-principal-authenticated machine surface (ADR 0008), not over the cookie
+  surface. `mcp-server`/`openclaw-ops` are operational callers and never write to
+  the database directly.
+- Every admin-surface mutation carries `reason` + `idempotencyKey` and emits an
+  append-only audit event reconstructable by `operationId`/`correlationId`;
+  request/result snapshots are stored redacted of secrets.
+- High-risk admin operations (`assignProjectRole` to admin, mass `revokeSession`,
+  `banUser`, `readmit`) require a prior approval; the requester cannot
+  self-approve, approvals expire by default after `24h`, and the action is
+  revalidated against current state before execution.
 
 ## Operational notes
 
@@ -141,10 +191,10 @@
 
 - Should membership metadata get a first-class contract soon, or remain opaque
   until an explicit use case appears?
-- Should the audit read API eventually gain a `reason` field and/or an export
-  or retention/pruning policy as history grows?
-- Should the service eventually support a first-class readmission flow for
-  revoked memberships, or keep revocation permanently terminal?
+- Should the membership audit read API eventually gain an export or
+  retention/pruning policy as history grows? (The `reason` and richer
+  attribution gap is now answered by the planned `AdminActionAudit`, and
+  first-class readmission is decided in ADR 0009.)
 - Should project admins eventually gain visibility into session history
   (revoked/expired rows only) or bulk revocation flows, or remain limited to
   direct per-session actions until a concrete use case appears?

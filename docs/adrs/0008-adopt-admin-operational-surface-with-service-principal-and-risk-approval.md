@@ -1,0 +1,184 @@
+# ADR 0008: Adopt an Admin Operational Surface with Service-Principal Auth and Risk-Based Approval
+
+- Date: 2026-05-31
+- Status: Accepted
+
+## Context
+
+The current HTTP surface is project-scoped and cookie-based (ADR 0007). Every
+administrative action is performed by a human project admin through an
+authenticated browser session, and the only operational tooling beyond that is a
+local bootstrap script (`npm run db:bootstrap-admin`). The checkpoints listed
+"define admin UX or operational tooling beyond local bootstrap scripts" as an
+undefined next slice.
+
+The wider portfolio already defines what that slice should become. In
+`platform-ai-architecture`, this service is `auth-service`, and ADR 0008 there
+("Operate Auth Admin via MCP with Risk-Based Approval") plus
+`docs/projects/auth-service.md` specify a machine-to-machine administrative
+surface that `openclaw-ops` drives through `mcp-server`. `auth-service` must stay
+the single point of authorization, approval, and audit; `mcp-server` is only an
+operational facade and must never write to the database directly.
+
+This ADR adopts that vision for `identity-service`, adapted to the service's
+actual implementation, and defines the slice end to end. It is a direction
+decision: the implementation lands in later incremental slices (see
+Implementation Notes). It does not change the existing cookie-based
+project-admin surface, which remains the human-facing path.
+
+## Decision Drivers
+
+- Provide administrative tooling beyond local scripts without turning the
+  cookie surface into a machine integration point.
+- Keep `identity-service` as the single authority for authorization, approval,
+  and audit, with `mcp-server`/`openclaw-ops` as thin operational callers.
+- Make every administrative mutation reconstructable from an append-only audit
+  trail keyed by `operationId` and `correlationId`.
+- Prevent duplicate side effects from channel/chat retries via idempotency.
+- Separate request from approval for high-risk actions, with no self-approval.
+- Reuse existing membership and session service logic rather than reimplementing
+  it behind the new surface.
+
+## Decision
+
+Adopt a dedicated administrative surface, separate from the cookie-based
+project-admin endpoints, with the following shape.
+
+### Machine identity (service principal)
+
+- A new `ServicePrincipal` represents an operational caller (e.g. the
+  `mcp-server` integration acting on behalf of `openclaw-ops`). It carries a
+  `slug`, `name`, optional `description`, a `status` (`ACTIVE` | `DISABLED`),
+  and timestamps including `lastUsedAt`.
+- The credential is a high-entropy secret. Only its `secretHash` (SHA256) is
+  persisted, mirroring `Session.secretHash`; the plaintext token is shown once
+  at creation and never stored.
+- The admin surface authenticates **only** by service principal (bearer token),
+  never by user cookie. The human operator behind the call is propagated
+  separately as `operatorUserId`.
+
+### Common envelope
+
+- Mutating operations accept a common request envelope:
+  `targetProjectId`, `reason`, `idempotencyKey`, `ticketRef?`, `channel`,
+  `payload`.
+- Mutating operations return a common response:
+  `status`, `operationId`, `approvalId?`, `auditEventId`, `message`, `result`.
+- Minimum `status` values: `completed`, `pending_approval`, `denied`, `failed`.
+- `idempotencyKey` is unique per `(servicePrincipalId, idempotencyKey)` so a
+  retried call returns the original outcome instead of re-applying side effects.
+
+### Operation family
+
+Discrete operations mapped 1:1 to the portfolio tool family:
+
+- Reads (execute directly): `listProjectUsers`, `getUserAccessStatus`,
+  `listPendingApprovals`.
+- Mutations: `createUser`, `assignProjectRole`, `revokeProjectAccess`,
+  `revokeSession`, `banUser`, `unbanUser`, `readmitProjectMembership`
+  (see ADR 0009), and `decideApproval`.
+
+Side effects are delegated to existing logic: project membership operations
+reuse `src/modules/project-memberships/project-memberships.services.ts`
+(create / roles / suspend / revoke), and session revocation reuses the admin
+revocation path in `src/modules/auth/auth.services.ts`. The new surface adds the
+envelope, idempotency, risk policy, approval, and audit around that logic.
+
+### Risk-based approval
+
+- Reads and low-risk mutations execute directly.
+- High-risk mutations create a pending `AdminApproval` and apply **no** side
+  effects until a separate decision. Minimum high-risk set in v1:
+  `assignProjectRole` to an admin role, `revokeSession` with mass scope,
+  `banUser` in any scope, `readmitProjectMembership`, and anything a policy marks
+  `high_risk`. `identity-service` decides the final risk and may escalate even
+  when the operation name is the same.
+- `decideApproval` is performed by a second operator. The requester cannot
+  self-approve (`approvedByUserId != requestedByUserId`). Approvals expire by
+  default after `24h`, and the action is revalidated against current state
+  before execution.
+
+### Two records of state
+
+- `AdminActionAudit`: append-only audit of admin events with milestone
+  `eventType` values `REQUESTED`, `PENDING_APPROVAL`, `APPROVED`, `REJECTED`,
+  `COMPLETED`, `DENIED`, `FAILED`. Reconstructable by `operationId`,
+  `correlationId`, and `idempotencyKey`. Request/result snapshots are stored
+  redacted of secrets, tokens, and credentials.
+- `AdminApproval`: live approval state for pending and resolved actions, with an
+  expiration timestamp.
+
+This trail is distinct from the existing `ProjectMembershipAuditLog`, which stays
+focused on membership mutations from the cookie surface.
+
+## Consequences
+
+### Positive
+
+- `openclaw-ops` can operate auth early via `mcp-server` without absorbing the
+  canonical permission or approval rules.
+- Sensitive actions gain real separation between request and approval.
+- Idempotency removes duplicate effects from channel/chat retries.
+- Every admin action is reconstructable from an immutable, redacted audit trail.
+- The cookie-based project-admin surface is untouched.
+
+### Negative
+
+- Operational experience for high-risk actions carries more friction.
+- The service must model risk policy in addition to permissions.
+- New state appears: machine credentials and pending approvals with expiry.
+
+### Risks
+
+- A leaked service-principal token is a high-value credential; rotation and
+  `DISABLED` status must be operationally easy.
+- The risk policy must default to safe (treat unknown as high-risk) so an
+  unclassified operation never silently executes a sensitive change.
+
+## Implementation Notes
+
+The slice is documented in full here and delivered incrementally:
+
+1. **Schema + machine auth.** Add `ServicePrincipal`, `AdminActionAudit`,
+   `AdminApproval` to `prisma/schema.prisma`, with a unique index on
+   `(servicePrincipalId, idempotencyKey)`. Add `READMITTED` to
+   `ProjectMembershipAuditAction` (ADR 0009) and a `BANNED -> ACTIVE` unban path
+   (`UserStatus` already has `BANNED` + `bannedAt`). Add
+   `src/shared/auth/service-principal-auth.ts` mirroring
+   `src/shared/auth/session-auth.ts`, and a service-principal bootstrap script
+   under `src/modules/identity/bootstrap/` that prints the token once.
+2. **Envelope + audit + direct path.** Add `src/modules/admin-operations/`
+   (`routes` / `services` / `repositories` / `schemas` / `guards`) mounted under
+   a separate namespace (e.g. `/admin/*`), authenticated only by service
+   principal. Implement the common envelope, idempotency, append-only audit, and
+   the read + low-risk mutation operations executing directly.
+3. **Risk + approval.** Add the risk engine, `AdminApproval` lifecycle, and
+   high-risk operations including `banUser`/`unbanUser`, `decideApproval`, and
+   `readmitProjectMembership`.
+
+- The admin surface validates input with Zod, consistent with existing modules.
+- List operations reuse the cursor-pagination shape from project memberships,
+  audit logs, and admin session listing.
+- The auth tools must not expose arbitrary queries or write directly to
+  PostgreSQL outside the defined operations.
+
+## Related Decisions
+
+- ADR 0002 defines centralized identity with project-local authorization.
+- ADR 0004 / ADR 0005 define the membership audit log and its read API, which
+  this surface complements rather than replaces.
+- ADR 0007 defines the cookie-based project-scoped surface that this surface sits
+  beside.
+- ADR 0009 defines revoked-membership readmission as a high-risk operation within
+  this surface.
+- `platform-ai-architecture` ADR 0008 ("Operate Auth Admin via MCP with
+  Risk-Based Approval") and `docs/projects/auth-service.md` are the source of this
+  vision.
+
+## References
+
+- `prisma/schema.prisma`
+- `src/shared/auth/session-auth.ts`
+- `src/modules/auth/auth.services.ts`
+- `src/modules/project-memberships/project-memberships.services.ts`
+- `src/modules/identity/bootstrap/project-admin-bootstrap.ts`
