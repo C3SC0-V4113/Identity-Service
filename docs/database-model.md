@@ -29,7 +29,9 @@ Related decision:
 - `ServicePrincipalProjectScope`: the explicit project allow-list for a service
   principal (irrelevant when `allProjects` is set).
 - `AdminOperation`: the single-row anchor per admin operation; holds the
-  resolved status, targets, `reason`, and the idempotency key.
+  resolved status, targets, `reason`, the idempotency key, and (for high-risk
+  operations awaiting approval) the `pendingPayloadJson` needed to replay the
+  side effect at decision time.
 - `AdminActionAudit`: append-only milestone events for an admin operation, with
   redacted request/result snapshots.
 - `AdminApproval`: live approval state (at most one per operation) for high-risk
@@ -251,6 +253,7 @@ erDiagram
         string targetProjectId
         string targetUserId
         string targetSessionId
+        json pendingPayloadJson
         string policyVersion
         string errorCode
         datetime createdAt

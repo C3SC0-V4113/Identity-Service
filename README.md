@@ -55,8 +55,11 @@ Current implementation highlights:
   project is disabled.
 - Machine-to-machine admin surface under `/admin/*`, authenticated by a
   service-principal bearer token with a project allow-list. Operations use a
-  common envelope, an append-only operation/audit trail, and a two-step
-  confirmation guard for high-risk actions (e.g. `banUser`) via
+  common envelope and an append-only operation/audit trail: reads, direct
+  mutations (`createUser`, `unbanUser`, `revokeProjectAccess`, single
+  `revokeSession`, non-admin `assignProjectRole`), and a two-step confirmation
+  guard for high-risk actions (`banUser`, mass `revokeSession`, `assignProjectRole`
+  to `admin`, `readmitProjectMembership`) via
   `POST /admin/approvals/:approvalId/decide`.
 - Admin-surface idempotency: every mutation carries an `idempotencyKey` that is
   unique per request. Retrying replays a successful/pending/denied result, while

@@ -10,18 +10,26 @@ import {
   adminListPendingApprovalsQuerySchema,
   adminListProjectUsersQuerySchema,
   adminUserIdParamsSchema,
+  assignProjectRoleOperationSchema,
   banUserOperationSchema,
   createUserOperationSchema,
   decideApprovalSchema,
+  readmitMembershipOperationSchema,
+  revokeProjectAccessOperationSchema,
+  revokeSessionOperationSchema,
   unbanUserOperationSchema,
 } from './admin-operations.schemas.js';
 import {
+  assignProjectRoleOperation,
   banUserOperation,
   createUserOperation,
   decideApprovalOperation,
   getUserAccessStatusOperation,
   listPendingApprovalsOperation,
   listProjectUsersOperation,
+  readmitMembershipOperation,
+  revokeProjectAccessOperation,
+  revokeSessionOperation,
   unbanUserOperation,
 } from './admin-operations.services.js';
 
@@ -52,6 +60,46 @@ export const adminOperationsRoutes: FastifyPluginCallback = (app, _options, done
     const correlationId = getCorrelationIdFromRequest(request) ?? null;
 
     const result = await unbanUserOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/memberships/roles', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = assignProjectRoleOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await assignProjectRoleOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/memberships/revoke', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = revokeProjectAccessOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await revokeProjectAccessOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/memberships/readmit', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = readmitMembershipOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await readmitMembershipOperation(app.prisma, principal, body, correlationId);
+
+    return reply.status(200).send(result);
+  });
+
+  app.post('/admin/sessions/revoke', async (request, reply) => {
+    const principal = await requireServicePrincipalFromRequest(app.prisma, request);
+    const body = revokeSessionOperationSchema.parse(request.body);
+    const correlationId = getCorrelationIdFromRequest(request) ?? null;
+
+    const result = await revokeSessionOperation(app.prisma, principal, body, correlationId);
 
     return reply.status(200).send(result);
   });

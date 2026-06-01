@@ -495,7 +495,7 @@ function ensureValidMembershipStatusTransition(input: {
   });
 }
 
-async function ensureActiveAdminRemainsAfterStatusChange(
+export async function ensureActiveAdminRemainsAfterStatusChange(
   prisma: PrismaDbClient,
   input: {
     projectId: string;
@@ -523,7 +523,7 @@ async function ensureActiveAdminRemainsAfterStatusChange(
   await ensureAnotherActiveAdminExists(prisma, input.projectId, input.membership.id);
 }
 
-async function ensureActiveAdminRemainsAfterRoleReplacement(
+export async function ensureActiveAdminRemainsAfterRoleReplacement(
   prisma: PrismaDbClient,
   input: {
     projectId: string;

@@ -11,11 +11,21 @@ import {
 import type { AuthenticatedServicePrincipal } from '../../shared/auth/service-principal-auth.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import {
+  revokeActiveSessionByIdForProject,
+  revokeActiveSessionsForUserInProject,
+} from '../auth/auth.repositories.js';
+import {
   createMembershipWithRoles,
   findMembershipWithRolesByProjectAndUser,
   findProjectRolesByCodes,
   listMembershipsByProject,
+  replaceMembershipRoles,
+  updateMembershipStatus,
 } from '../project-memberships/project-memberships.repositories.js';
+import {
+  ensureActiveAdminRemainsAfterRoleReplacement,
+  ensureActiveAdminRemainsAfterStatusChange,
+} from '../project-memberships/project-memberships.services.js';
 import type { AdminTargetProject } from './admin-operations.guards.js';
 import { requireTargetProjectById } from './admin-operations.guards.js';
 import {
@@ -34,9 +44,13 @@ import type {
   AdminMutationEnvelope,
   AdminMutationResponse,
   AdminOperationResponseStatus,
+  AssignProjectRoleOperationRequest,
   BanUserOperationRequest,
   CreateUserOperationRequest,
   DecideApprovalRequest,
+  ReadmitMembershipOperationRequest,
+  RevokeProjectAccessOperationRequest,
+  RevokeSessionOperationRequest,
   UnbanUserOperationRequest,
 } from './admin-operations.schemas.js';
 
@@ -77,6 +91,7 @@ interface ApprovalGatedMutationParams extends OperationContext {
   pendingMessage: string;
   targetUserId?: string | null;
   targetSessionId?: string | null;
+  pendingPayloadJson?: unknown;
 }
 
 interface PendingOperationContext {
@@ -85,6 +100,7 @@ interface PendingOperationContext {
   targetProjectId: string | null;
   targetUserId: string | null;
   targetSessionId: string | null;
+  pendingPayloadJson: unknown;
 }
 
 export async function createUserOperation(
@@ -345,6 +361,10 @@ async function runApprovalGatedMutation(
       message: params.pendingMessage,
       result: null,
     } as unknown as Prisma.InputJsonValue,
+    pendingPayloadJson:
+      params.pendingPayloadJson === undefined
+        ? undefined
+        : (params.pendingPayloadJson as Prisma.InputJsonValue),
     requiredApprovalLevel: params.requiredApprovalLevel,
     expiresAt: new Date(Date.now() + approvalTtlMs),
   });
@@ -380,6 +400,29 @@ const approvalExecutors: Record<string, ApprovalExecutor> = {
     });
 
     return { result: { user }, message: 'User banned' };
+  },
+  'auth.assignProjectRole': async (tx, operation) => {
+    const result = await executeAssignProjectRole(tx, {
+      projectId: requireOperationTargetProject(operation),
+      userId: requireOperationTargetUser(operation),
+      roleCodes: readRoleCodesFromPayload(operation.pendingPayloadJson) ?? [],
+    });
+    return { result: result.result, message: result.message };
+  },
+  'auth.readmitProjectMembership': async (tx, operation) => {
+    const result = await executeReadmitMembership(tx, {
+      projectId: requireOperationTargetProject(operation),
+      userId: requireOperationTargetUser(operation),
+      roleCodes: readRoleCodesFromPayload(operation.pendingPayloadJson),
+    });
+    return { result: result.result, message: result.message };
+  },
+  'auth.revokeSession': async (tx, operation) => {
+    const result = await executeMassRevokeSessions(tx, {
+      projectId: requireOperationTargetProject(operation),
+      userId: requireOperationTargetUser(operation),
+    });
+    return { result: result.result, message: result.message };
   },
 };
 
@@ -450,6 +493,362 @@ export async function unbanUserOperation(
 
       return { result: { user }, message: 'User unbanned', targetUserId: user.id };
     },
+  });
+}
+
+export async function assignProjectRoleOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: AssignProjectRoleOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+  const roleCodes = request.payload.roleCodes;
+  const redactedPayload = { userId: request.payload.userId, roleCodes };
+
+  // High risk only when an admin role is being granted (ADR 0008 risk policy).
+  if (roleCodes.includes('admin')) {
+    return runApprovalGatedMutation(prisma, principal, {
+      operationName: 'auth.assignProjectRole',
+      envelope: request,
+      project,
+      correlationId,
+      redactedPayload,
+      requiredApprovalLevel: 'confirmation',
+      targetUserId: request.payload.userId,
+      pendingPayloadJson: { roleCodes },
+      pendingMessage: 'Admin role assignment requested; awaiting confirmation',
+    });
+  }
+
+  return executeAdminMutation(prisma, principal, {
+    operationName: 'auth.assignProjectRole',
+    envelope: request,
+    project,
+    correlationId,
+    redactedPayload,
+    execute: (tx) =>
+      executeAssignProjectRole(tx, {
+        projectId: project.id,
+        userId: request.payload.userId,
+        roleCodes,
+      }),
+  });
+}
+
+export async function revokeProjectAccessOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: RevokeProjectAccessOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+
+  return executeAdminMutation(prisma, principal, {
+    operationName: 'auth.revokeProjectAccess',
+    envelope: request,
+    project,
+    correlationId,
+    redactedPayload: { userId: request.payload.userId },
+    execute: (tx) =>
+      executeRevokeProjectAccess(tx, { projectId: project.id, userId: request.payload.userId }),
+  });
+}
+
+export async function readmitMembershipOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: ReadmitMembershipOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+
+  // Readmission is always high risk (ADR 0009).
+  return runApprovalGatedMutation(prisma, principal, {
+    operationName: 'auth.readmitProjectMembership',
+    envelope: request,
+    project,
+    correlationId,
+    redactedPayload: {
+      userId: request.payload.userId,
+      roleCodes: request.payload.roleCodes ?? null,
+    },
+    requiredApprovalLevel: 'confirmation',
+    targetUserId: request.payload.userId,
+    pendingPayloadJson: { roleCodes: request.payload.roleCodes ?? null },
+    pendingMessage: 'Membership readmission requested; awaiting confirmation',
+  });
+}
+
+export async function revokeSessionOperation(
+  prisma: PrismaClient,
+  principal: AuthenticatedServicePrincipal,
+  request: RevokeSessionOperationRequest,
+  correlationId: string | null,
+): Promise<AdminMutationResponse> {
+  const project = await requireTargetProjectById(prisma, request.targetProjectId);
+
+  // Revoking a single session is low risk; a mass (per-user) revoke is high risk.
+  if (request.payload.sessionId !== undefined) {
+    const sessionId = request.payload.sessionId;
+    return executeAdminMutation(prisma, principal, {
+      operationName: 'auth.revokeSession',
+      envelope: request,
+      project,
+      correlationId,
+      redactedPayload: { sessionId },
+      execute: (tx) => executeRevokeSingleSession(tx, { projectId: project.id, sessionId }),
+    });
+  }
+
+  if (request.payload.userId !== undefined) {
+    const userId = request.payload.userId;
+    return runApprovalGatedMutation(prisma, principal, {
+      operationName: 'auth.revokeSession',
+      envelope: request,
+      project,
+      correlationId,
+      redactedPayload: { userId },
+      requiredApprovalLevel: 'confirmation',
+      targetUserId: userId,
+      pendingMessage: 'Mass session revocation requested; awaiting confirmation',
+    });
+  }
+
+  throw new AppError('Provide exactly one of sessionId or userId', {
+    statusCode: 400,
+    code: 'ADMIN_REVOKE_SESSION_TARGET_INVALID',
+  });
+}
+
+const adminSessionRevokedReason = 'ADMIN_OPERATION_REVOKED';
+
+function mapMembershipResult(membership: {
+  id: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
+  membershipRoles: Array<{ role: { id: string; code: string; name: string } }>;
+}) {
+  return {
+    id: membership.id,
+    status: membership.status,
+    roles: membership.membershipRoles.map((membershipRole) => membershipRole.role),
+  };
+}
+
+async function executeAssignProjectRole(
+  tx: PrismaClient,
+  input: { projectId: string; userId: string; roleCodes: readonly string[] },
+): Promise<MutationExecuteResult> {
+  const roleCodes = [...new Set(input.roleCodes)];
+
+  if (roleCodes.length === 0) {
+    throw new AppError('At least one project role is required', {
+      statusCode: 400,
+      code: 'PROJECT_ROLE_CODES_REQUIRED',
+    });
+  }
+
+  const membership = await findMembershipWithRolesByProjectAndUser(
+    tx,
+    input.projectId,
+    input.userId,
+  );
+
+  if (membership === null) {
+    throw membershipNotFoundError();
+  }
+
+  const roles = await findProjectRolesByCodes(tx, input.projectId, roleCodes);
+
+  if (roles.length !== roleCodes.length) {
+    throw projectRolesInvalidError();
+  }
+
+  await ensureActiveAdminRemainsAfterRoleReplacement(tx, {
+    projectId: input.projectId,
+    membership,
+    nextRoleCodes: roleCodes,
+  });
+
+  const updated = await replaceMembershipRoles(tx, {
+    membershipId: membership.id,
+    roleIds: roles.map((role) => role.id),
+  });
+
+  return {
+    result: { membership: mapMembershipResult(updated) },
+    message: 'Project roles updated',
+    targetUserId: input.userId,
+  };
+}
+
+async function executeRevokeProjectAccess(
+  tx: PrismaClient,
+  input: { projectId: string; userId: string },
+): Promise<MutationExecuteResult> {
+  const membership = await findMembershipWithRolesByProjectAndUser(
+    tx,
+    input.projectId,
+    input.userId,
+  );
+
+  if (membership === null) {
+    throw membershipNotFoundError();
+  }
+
+  if (membership.status === 'REVOKED') {
+    throw new AppError('Cannot revoke a membership that is already revoked', {
+      statusCode: 409,
+      code: 'PROJECT_MEMBERSHIP_STATUS_TRANSITION_INVALID',
+    });
+  }
+
+  await ensureActiveAdminRemainsAfterStatusChange(tx, {
+    projectId: input.projectId,
+    membership,
+    nextStatus: 'REVOKED',
+  });
+
+  const updated = await updateMembershipStatus(tx, {
+    membershipId: membership.id,
+    status: 'REVOKED',
+  });
+
+  return {
+    result: { membership: mapMembershipResult(updated) },
+    message: 'Project access revoked',
+    targetUserId: input.userId,
+  };
+}
+
+async function executeReadmitMembership(
+  tx: PrismaClient,
+  input: { projectId: string; userId: string; roleCodes: readonly string[] | undefined },
+): Promise<MutationExecuteResult> {
+  const membership = await findMembershipWithRolesByProjectAndUser(
+    tx,
+    input.projectId,
+    input.userId,
+  );
+
+  if (membership === null) {
+    throw membershipNotFoundError();
+  }
+
+  if (membership.status !== 'REVOKED') {
+    throw new AppError('Only revoked memberships can be readmitted', {
+      statusCode: 409,
+      code: 'PROJECT_MEMBERSHIP_NOT_REVOKED',
+    });
+  }
+
+  const roleCodes = [...new Set(input.roleCodes ?? ['user'])];
+  const roles = await findProjectRolesByCodes(tx, input.projectId, roleCodes);
+
+  if (roles.length !== roleCodes.length) {
+    throw projectRolesInvalidError();
+  }
+
+  await updateMembershipStatus(tx, { membershipId: membership.id, status: 'ACTIVE' });
+  const updated = await replaceMembershipRoles(tx, {
+    membershipId: membership.id,
+    roleIds: roles.map((role) => role.id),
+  });
+
+  return {
+    result: { membership: mapMembershipResult(updated) },
+    message: 'Membership readmitted',
+    targetUserId: input.userId,
+  };
+}
+
+async function executeRevokeSingleSession(
+  tx: PrismaClient,
+  input: { projectId: string; sessionId: string },
+): Promise<MutationExecuteResult> {
+  const result = await revokeActiveSessionByIdForProject(tx, {
+    sessionId: input.sessionId,
+    projectId: input.projectId,
+    revokedReason: adminSessionRevokedReason,
+  });
+
+  if (result.count === 0) {
+    throw new AppError('Active session not found for this project', {
+      statusCode: 404,
+      code: 'SESSION_NOT_FOUND',
+    });
+  }
+
+  return {
+    result: { revokedCount: result.count },
+    message: 'Session revoked',
+    targetSessionId: input.sessionId,
+  };
+}
+
+async function executeMassRevokeSessions(
+  tx: PrismaClient,
+  input: { projectId: string; userId: string },
+): Promise<MutationExecuteResult> {
+  const result = await revokeActiveSessionsForUserInProject(tx, {
+    projectId: input.projectId,
+    userId: input.userId,
+    revokedReason: adminSessionRevokedReason,
+  });
+
+  return {
+    result: { revokedCount: result.count },
+    message: `Revoked ${result.count} active session(s)`,
+    targetUserId: input.userId,
+  };
+}
+
+function requireOperationTargetProject(operation: PendingOperationContext): string {
+  if (operation.targetProjectId === null) {
+    throw operationTargetMissingError();
+  }
+  return operation.targetProjectId;
+}
+
+function requireOperationTargetUser(operation: PendingOperationContext): string {
+  if (operation.targetUserId === null) {
+    throw operationTargetMissingError();
+  }
+  return operation.targetUserId;
+}
+
+function readRoleCodesFromPayload(pendingPayloadJson: unknown): string[] | undefined {
+  if (pendingPayloadJson === null || typeof pendingPayloadJson !== 'object') {
+    return undefined;
+  }
+
+  const roleCodes = (pendingPayloadJson as { roleCodes?: unknown }).roleCodes;
+
+  if (!Array.isArray(roleCodes)) {
+    return undefined;
+  }
+
+  return roleCodes.filter((code): code is string => typeof code === 'string');
+}
+
+function membershipNotFoundError(): AppError {
+  return new AppError('Project membership not found', {
+    statusCode: 404,
+    code: 'PROJECT_MEMBERSHIP_NOT_FOUND',
+  });
+}
+
+function projectRolesInvalidError(): AppError {
+  return new AppError('One or more project roles do not exist in this project', {
+    statusCode: 400,
+    code: 'PROJECT_ROLE_CODES_INVALID',
+  });
+}
+
+function operationTargetMissingError(): AppError {
+  return new AppError('Operation is missing a required target', {
+    statusCode: 500,
+    code: 'ADMIN_OPERATION_TARGET_MISSING',
   });
 }
 

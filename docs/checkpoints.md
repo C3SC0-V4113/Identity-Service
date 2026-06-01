@@ -69,24 +69,22 @@
   legacy global sessions are revoked during schema migration with reason
   `LEGACY_GLOBAL_SESSION`.
 
-## Next slices
+## Latest slice: machine admin operational surface (ADR 0008/0009)
 
 ### Admin operational surface (MCP-facing)
 
-- Status: defined (ADR 0008); foundation, direct-path surface, and the approval
-  lifecycle implemented; remaining membership/session mutations pending.
-  Delivered: `ServicePrincipal` + project allow-list,
-  `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema, bearer-token machine
-  auth, the service-principal bootstrap script, the `/admin/*` surface with the
-  common envelope, idempotent replay, append-only audit, reads (`listProjectUsers`,
-  `getUserAccessStatus`, `listPendingApprovals`), the low-risk mutations
-  `auth.createUser` and `auth.unbanUser`, and the approval lifecycle:
-  `auth.banUser` (high-risk → `pending_approval`) and `decideApproval`
-  (approve/reject as a two-step confirmation guard — the same operator may
-  confirm — 24h expiry, deferred execution on approval). Pending:
-  `assignProjectRole`, `revokeProjectAccess`,
-  `revokeSession`, and `readmitProjectMembership` (need the project-membership
-  invariants and a stored execution payload for approval-time replay).
+- Status: implemented (ADR 0008/0009). Delivered: `ServicePrincipal` + project
+  allow-list, `AdminOperation`/`AdminActionAudit`/`AdminApproval` schema,
+  bearer-token machine auth, the service-principal bootstrap script, the
+  `/admin/*` surface with the common envelope, idempotent replay (with `FAILED`
+  retry and cross-operation reuse rejection), append-only audit, reads
+  (`listProjectUsers`, `getUserAccessStatus`, `listPendingApprovals`), the
+  approval lifecycle (`pending_approval` + `decideApproval` as a two-step
+  confirmation guard, 24h expiry, deferred execution), and the full mutation
+  family: `createUser`, `unbanUser`, `revokeProjectAccess`, single `revokeSession`
+  (direct); `banUser`, mass `revokeSession`, `assignProjectRole` to `admin`, and
+  `readmitProjectMembership` (high-risk, approval-gated). `assignProjectRole` is
+  direct for non-admin roles.
 - Scope: a machine-to-machine administrative surface, separate from the
   cookie-based project-admin endpoints, that `mcp-server`/`openclaw-ops` consume.
   `identity-service` stays the single authority for authorization, approval, and
@@ -121,12 +119,25 @@
 
 ### Revoked membership readmission
 
-- Status: defined (ADR 0009), not implemented.
+- Status: implemented (ADR 0009).
 - Scope: a high-risk `readmitProjectMembership` operation inside the admin
   surface that transitions a membership `REVOKED -> ACTIVE` (roles reset to the
-  default `user` role unless an explicit set is supplied), gated by approval and
-  recorded with a new `READMITTED` membership audit action. The cookie surface is
-  unchanged: login still never reactivates `SUSPENDED`/`REVOKED` memberships.
+  default `user` role unless an explicit set is supplied), gated by approval. It
+  audits to the `AdminOperation`/`AdminActionAudit` trail like every machine
+  operation (the `READMITTED` membership-audit action is reserved for a future
+  cookie-surface readmission with a human actor). The cookie surface is unchanged:
+  login still never reactivates `SUSPENDED`/`REVOKED` memberships.
+
+## Next slices
+
+- Decide whether machine-initiated mutations should also be visible to project
+  admins (e.g. surfaced into the membership view or a unified read), since they
+  currently only land in the `AdminActionAudit` trail.
+- Define a retention/export/pruning policy for the admin audit trail as it grows.
+- Make the risk policy data-driven (use `AdminOperation.policyVersion`) instead
+  of hard-coded per-operation classification.
+- Reintroduce a two-operator approval rule if a second operational identity is
+  ever connected (today it is a single-bot two-step confirmation guard).
 
 ## Closed decisions
 

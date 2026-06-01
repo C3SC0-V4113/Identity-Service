@@ -42,9 +42,14 @@ Readmission of a `REVOKED` membership is a first-class administrative operation,
   (a deliberate two-step guard; the same operator may confirm). The membership
   state is revalidated before execution (a membership no longer `REVOKED` at
   decision time fails the operation).
-- It records a new `ProjectMembershipAuditLog` action, `READMITTED`, with the
-  `fromStatus`/`toStatus` and role transition, in addition to the
-  `AdminActionAudit` milestones emitted by the admin surface.
+- Like every machine-surface mutation, it audits to the
+  `AdminOperation`/`AdminActionAudit` trail (reconstructable by `operationId`),
+  not to `ProjectMembershipAuditLog`. The `READMITTED` value was added to
+  `ProjectMembershipAuditAction` for a future cookie-surface readmission with a
+  human `actorUserId`; the machine path leaves it unused because operators are
+  not ecosystem `User` rows (the audit's `actorUserId` is a required FK), so a
+  machine readmission has no `User` actor to attribute the membership-audit row
+  to. This keeps the two trails cleanly separated, consistent with ADR 0008.
 - The cookie-based surface is unchanged: login still never reactivates a
   `SUSPENDED` or `REVOKED` membership, and there is no self-service readmission.
 

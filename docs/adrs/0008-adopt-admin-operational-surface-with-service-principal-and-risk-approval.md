@@ -217,19 +217,21 @@ The slice is documented in full here and delivered incrementally:
    `listPendingApprovals`), and the first direct low-risk mutation
    `auth.createUser`. Routes: `POST /admin/users`, `GET /admin/users`,
    `GET /admin/users/:userId/access`, `GET /admin/approvals`.
-3. **Risk + approval. (In progress)** Delivered the approval lifecycle: high-risk
-   operations record a `PENDING_APPROVAL` operation plus a live `AdminApproval`
-   (24h expiry) instead of executing; `decideApproval`
+3. **Risk + approval. (Delivered)** The approval lifecycle: high-risk operations
+   record a `PENDING_APPROVAL` operation plus a live `AdminApproval` (24h expiry)
+   instead of executing; `decideApproval`
    (`POST /admin/approvals/:approvalId/decide`) confirms (approve) or cancels
    (reject) the pending action as a deliberate second step — the same operator may
    confirm — enforces expiry, and runs the deferred side effect on approval via a
-   per-operation executor registry. First operations on this path: `auth.banUser` (high-risk,
-   approval-gated) and `auth.unbanUser` (low-risk, direct). The deferred executor
-   currently replays from the operation's stored targets. Pending: the remaining
-   membership/session mutations (`assignProjectRole`, `revokeProjectAccess`,
-   `revokeSession`, `readmitProjectMembership`), which reuse the project-membership
-   invariants (e.g. last-active-admin protection) and will store the execution
-   payload needed to replay role changes at approval time.
+   per-operation executor registry. The full mutation family is implemented:
+   `banUser`/`unbanUser`, `assignProjectRole` (high-risk only when granting the
+   `admin` role, else direct), `revokeProjectAccess` (direct), `revokeSession`
+   (single = direct, mass per-user = high-risk), and `readmitProjectMembership`
+   (always high-risk, ADR 0009). Membership operations reuse the
+   project-membership invariants (last-active-admin protection, exported from
+   `project-memberships.services.ts`); deferred operations replay their side
+   effect from the operation's targets plus `AdminOperation.pendingPayloadJson`
+   (e.g. the role codes for `assignProjectRole`/`readmitProjectMembership`).
 
 - The admin surface validates input with Zod, consistent with existing modules.
 - List operations reuse the cursor-pagination shape from project memberships,

@@ -265,6 +265,28 @@ export async function revokeActiveSessionByIdForProject(
   });
 }
 
+export async function revokeActiveSessionsForUserInProject(
+  prisma: PrismaDbClient,
+  input: {
+    projectId: string;
+    userId: string;
+    revokedReason: string;
+  },
+) {
+  return prisma.session.updateMany({
+    where: {
+      projectId: input.projectId,
+      userId: input.userId,
+      status: 'ACTIVE',
+    },
+    data: {
+      status: 'REVOKED',
+      revokedAt: new Date(),
+      revokedReason: input.revokedReason,
+    },
+  });
+}
+
 export async function markSessionExpired(prisma: PrismaDbClient, sessionId: string) {
   return prisma.session.update({
     where: {

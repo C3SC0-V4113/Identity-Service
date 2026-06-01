@@ -253,6 +253,7 @@ model AdminOperation {
   targetProjectId    String?              @map("target_project_id") @db.Text
   targetUserId       String?              @map("target_user_id") @db.Text
   targetSessionId    String?              @map("target_session_id") @db.Text
+  pendingPayloadJson Json?                @map("pending_payload_json")
   policyVersion      String?              @map("policy_version") @db.Text
   errorCode          String?              @map("error_code") @db.Text
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)

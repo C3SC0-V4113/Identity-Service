@@ -38,6 +38,47 @@ export const unbanUserOperationSchema = banUserOperationSchema;
 
 export type UnbanUserOperationRequest = z.infer<typeof unbanUserOperationSchema>;
 
+export const assignProjectRoleOperationSchema = adminMutationEnvelopeSchema.extend({
+  payload: z.object({
+    userId: z.string().trim().min(1),
+    roleCodes: z.array(z.string().trim().min(1)).min(1),
+  }),
+});
+
+export type AssignProjectRoleOperationRequest = z.infer<typeof assignProjectRoleOperationSchema>;
+
+export const revokeProjectAccessOperationSchema = adminMutationEnvelopeSchema.extend({
+  payload: z.object({
+    userId: z.string().trim().min(1),
+  }),
+});
+
+export type RevokeProjectAccessOperationRequest = z.infer<
+  typeof revokeProjectAccessOperationSchema
+>;
+
+export const readmitMembershipOperationSchema = adminMutationEnvelopeSchema.extend({
+  payload: z.object({
+    userId: z.string().trim().min(1),
+    roleCodes: z.array(z.string().trim().min(1)).min(1).optional(),
+  }),
+});
+
+export type ReadmitMembershipOperationRequest = z.infer<typeof readmitMembershipOperationSchema>;
+
+export const revokeSessionOperationSchema = adminMutationEnvelopeSchema.extend({
+  payload: z
+    .object({
+      sessionId: z.string().trim().min(1).optional(),
+      userId: z.string().trim().min(1).optional(),
+    })
+    .refine((value) => (value.sessionId === undefined) !== (value.userId === undefined), {
+      message: 'Provide exactly one of sessionId (single) or userId (mass)',
+    }),
+});
+
+export type RevokeSessionOperationRequest = z.infer<typeof revokeSessionOperationSchema>;
+
 export const adminApprovalIdParamsSchema = z.object({
   approvalId: z.string().trim().min(1),
 });

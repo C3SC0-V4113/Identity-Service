@@ -214,6 +214,7 @@ export interface RecordPendingApprovalOperationInput {
   targetSessionId: string | null;
   requestSnapshotJson: Prisma.InputJsonValue;
   pendingResultSnapshotJson: Prisma.InputJsonValue;
+  pendingPayloadJson?: Prisma.InputJsonValue;
   requiredApprovalLevel: string;
   expiresAt: Date;
 }
@@ -241,6 +242,7 @@ export async function recordPendingApprovalOperation(
       targetProjectId: input.targetProjectId,
       targetUserId: input.targetUserId,
       targetSessionId: input.targetSessionId,
+      pendingPayloadJson: input.pendingPayloadJson,
     },
     select: {
       id: true,
@@ -306,6 +308,7 @@ export async function findApprovalForDecision(prisma: AdminOperationsDbClient, a
           targetProjectId: true,
           targetUserId: true,
           targetSessionId: true,
+          pendingPayloadJson: true,
         },
       },
     },
