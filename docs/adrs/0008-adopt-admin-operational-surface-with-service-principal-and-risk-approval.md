@@ -57,6 +57,33 @@ project-admin endpoints, with the following shape.
   never by user cookie. The human operator behind the call is propagated
   separately as `operatorUserId`.
 
+### Project scope of a service principal
+
+The machine identity is **global and project-targeted per operation**, not
+project-scoped like a user session. A single bearer token authenticates the whole
+admin surface; there is **no per-project re-login**. The project a mutation acts on
+is chosen per call via `targetProjectId` in the envelope. This matches
+`openclaw-ops` being a global administrative surface and the envelope already
+carrying `targetProjectId`.
+
+To keep least privilege, each `ServicePrincipal` is constrained to the projects it
+may target:
+
+- A boolean `allProjects` flag grants the principal every project. It is the
+  global-admin grant intended for the `openclaw-ops` principal and is set only
+  deliberately.
+- Otherwise the principal holds an explicit project allow-list, modeled as a
+  `ServicePrincipalProjectScope` join (`servicePrincipalId`, `projectId`). A new
+  principal grants no projects by default; access is explicit.
+- Authorization rule: every operation's `targetProjectId` must be permitted by the
+  principal (either `allProjects = true` or the project present in its scope set).
+  A disallowed `targetProjectId` resolves the operation as `denied` and is audited;
+  it never executes the side effect.
+
+This deliberately differs from the cookie surface, where there is no global admin
+role; the service principal is the explicit, audited, opt-in global/scoped machine
+authority the portfolio asked for.
+
 ### Common envelope
 
 - Mutating operations accept a common request envelope:
@@ -139,14 +166,20 @@ focused on membership mutations from the cookie surface.
 
 The slice is documented in full here and delivered incrementally:
 
-1. **Schema + machine auth.** Add `ServicePrincipal`, `AdminActionAudit`,
-   `AdminApproval` to `prisma/schema.prisma`, with a unique index on
+1. **Schema + machine auth.** Add `ServicePrincipal` (with an `allProjects`
+   flag), `ServicePrincipalProjectScope` (join: `servicePrincipalId`,
+   `projectId`), `AdminActionAudit`, and `AdminApproval` to
+   `prisma/schema.prisma`, with a unique index on
    `(servicePrincipalId, idempotencyKey)`. Add `READMITTED` to
    `ProjectMembershipAuditAction` (ADR 0009) and a `BANNED -> ACTIVE` unban path
    (`UserStatus` already has `BANNED` + `bannedAt`). Add
    `src/shared/auth/service-principal-auth.ts` mirroring
-   `src/shared/auth/session-auth.ts`, and a service-principal bootstrap script
-   under `src/modules/identity/bootstrap/` that prints the token once.
+   `src/shared/auth/session-auth.ts` (resolve principal by `secretHash`, require
+   `status = ACTIVE`, touch `lastUsedAt`). The admin guard enforces the
+   `targetProjectId` allow-list (`allProjects` or scope membership) before any
+   side effect. Add a service-principal bootstrap script under
+   `src/modules/identity/bootstrap/` that creates a principal (optionally
+   `--all-projects` or `--project <slug>` grants) and prints the token once.
 2. **Envelope + audit + direct path.** Add `src/modules/admin-operations/`
    (`routes` / `services` / `repositories` / `schemas` / `guards`) mounted under
    a separate namespace (e.g. `/admin/*`), authenticated only by service

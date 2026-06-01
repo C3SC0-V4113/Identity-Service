@@ -80,7 +80,11 @@
   audit; callers never write to the database directly.
 - Machine identity: a new `ServicePrincipal` authenticates the surface by bearer
   token (only the `secretHash` is persisted, like `Session.secretHash`); the
-  human operator is propagated separately as `operatorUserId`.
+  human operator is propagated separately as `operatorUserId`. The token is
+  global and project-targeted per operation (no per-project re-login): the
+  principal either has `allProjects = true` (the `openclaw-ops` global grant) or
+  an explicit `ServicePrincipalProjectScope` allow-list, and a `targetProjectId`
+  outside its scope resolves the operation as `denied`.
 - Contract: mutations use a common envelope
   (`targetProjectId`, `reason`, `idempotencyKey`, `ticketRef?`, `channel`,
   `payload`) and a common response
@@ -152,6 +156,10 @@
   service-principal-authenticated machine surface (ADR 0008), not over the cookie
   surface. `mcp-server`/`openclaw-ops` are operational callers and never write to
   the database directly.
+- A service principal authenticates globally and selects the project per
+  operation via `targetProjectId`; it never re-logs in per project. Project reach
+  is least-privilege: `allProjects` (the global `openclaw-ops` grant) or an
+  explicit project allow-list, enforced before any side effect.
 - Every admin-surface mutation carries `reason` + `idempotencyKey` and emits an
   append-only audit event reconstructable by `operationId`/`correlationId`;
   request/result snapshots are stored redacted of secrets.
