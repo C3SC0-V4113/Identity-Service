@@ -51,6 +51,9 @@ Current implementation highlights:
 - Structured audit logging for successful project membership mutations.
 - Admin-only membership audit history reads with `GET /projects/:slug/audit-logs`,
   including action/target/membership filtering and cursor pagination.
+- Project admins get read-only visibility into machine admin operations targeting
+  their project with `GET /projects/:slug/admin-operations` (status/operationName
+  filtering, cursor pagination, approval summary).
 - Project-scoped membership and access endpoints are blocked when the target
   project is disabled.
 - Machine-to-machine admin surface under `/admin/*`, authenticated by a

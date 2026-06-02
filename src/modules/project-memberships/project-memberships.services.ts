@@ -3,6 +3,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 
 import { normalizeEmail } from '../../shared/auth/email.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import { listAdminOperationsByProject } from '../admin-operations/admin-operations.repositories.js';
 import { requireProjectAdmin, requireProjectBySlug } from './project-memberships.guards.js';
 import {
   createProjectMembershipAuditLog,
@@ -19,9 +20,11 @@ import {
 } from './project-memberships.repositories.js';
 import type {
   CreateProjectMembershipRequest,
+  ListProjectAdminOperationsQuery,
   ListProjectAuditLogsQuery,
   ListProjectMembershipsQuery,
   ProjectAccessResponse,
+  ProjectAdminOperationListResponse,
   ProjectAuditLogListResponse,
   ProjectMembershipListResponse,
   ProjectMembershipResponse,
@@ -667,6 +670,73 @@ export async function listProjectMembershipAuditLogs(
       fromRoleCodes: auditLog.fromRoleCodes,
       toRoleCodes: auditLog.toRoleCodes,
       createdAt: auditLog.createdAt.toISOString(),
+    })),
+    page: {
+      nextCursor:
+        hasMore && lastItem !== undefined
+          ? encodeMembershipListCursor(lastItem.createdAt, lastItem.id)
+          : null,
+      hasMore,
+      limit: input.query.limit,
+    },
+  };
+}
+
+export async function listProjectAdminOperations(
+  prisma: PrismaClient,
+  input: {
+    actorUserId: string;
+    projectSlug: string;
+    query: ListProjectAdminOperationsQuery;
+  },
+): Promise<ProjectAdminOperationListResponse> {
+  const project = await requireProjectBySlug(prisma, input.projectSlug);
+  await requireProjectAdmin(prisma, project.id, input.actorUserId);
+
+  const records = await listAdminOperationsByProject(prisma, {
+    projectId: project.id,
+    limit: input.query.limit + 1,
+    status: input.query.status,
+    operationName: input.query.operationName,
+    cursor:
+      input.query.cursor === undefined
+        ? undefined
+        : membershipListCursorSchema.parse(input.query.cursor),
+  });
+
+  const hasMore = records.length > input.query.limit;
+  const pageItems = hasMore ? records.slice(0, input.query.limit) : records;
+  const lastItem = pageItems.at(-1);
+
+  return {
+    project,
+    items: pageItems.map((operation) => ({
+      operationId: operation.id,
+      operationName: operation.operationName,
+      status: operation.status,
+      reason: operation.reason,
+      ticketRef: operation.ticketRef,
+      sourceChannel: operation.sourceChannel,
+      operatorUserId: operation.operatorUserId,
+      servicePrincipalId: operation.servicePrincipalId,
+      targetUserId: operation.targetUserId,
+      targetSessionId: operation.targetSessionId,
+      correlationId: operation.correlationId,
+      errorCode: operation.errorCode,
+      approval:
+        operation.approval === null
+          ? null
+          : {
+              approvalId: operation.approval.id,
+              status: operation.approval.status,
+              requestedByUserId: operation.approval.requestedByUserId,
+              approvedByUserId: operation.approval.approvedByUserId,
+              requestedAt: operation.approval.requestedAt.toISOString(),
+              decidedAt: operation.approval.decidedAt?.toISOString() ?? null,
+              expiresAt: operation.approval.expiresAt.toISOString(),
+            },
+      createdAt: operation.createdAt.toISOString(),
+      updatedAt: operation.updatedAt.toISOString(),
     })),
     page: {
       nextCursor:

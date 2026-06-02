@@ -32,6 +32,7 @@
   `GET /projects/:slug/me`,
   `GET /projects/:slug/memberships`,
   `GET /projects/:slug/audit-logs`,
+  `GET /projects/:slug/admin-operations`,
   `POST /projects/:slug/memberships`,
   `POST /projects/:slug/memberships/:userId/suspend`,
   `POST /projects/:slug/memberships/:userId/reactivate`,
@@ -130,9 +131,6 @@
 
 ## Next slices
 
-- Decide whether machine-initiated mutations should also be visible to project
-  admins (e.g. surfaced into the membership view or a unified read), since they
-  currently only land in the `AdminActionAudit` trail.
 - Define a retention/export/pruning policy for the admin audit trail as it grows.
 - Make the risk policy data-driven (use `AdminOperation.policyVersion`) instead
   of hard-coded per-operation classification.
@@ -181,6 +179,11 @@
   service-principal-authenticated machine surface (ADR 0008), not over the cookie
   surface. `mcp-server`/`openclaw-ops` are operational callers and never write to
   the database directly.
+- Project admins get read-only visibility into machine operations targeting their
+  project through `GET /projects/:slug/admin-operations` (cookie + project-admin
+  auth). It returns operation metadata, status, targets, and the approval summary,
+  but not the redacted request/result snapshots. The write surface stays
+  machine-only; this only bridges the audit gap for human admins.
 - A service principal authenticates globally and selects the project per
   operation via `targetProjectId`; it never re-logs in per project. Project reach
   is least-privilege: `allProjects` (the global `openclaw-ops` grant) or an

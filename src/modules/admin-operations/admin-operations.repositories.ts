@@ -315,6 +315,85 @@ export async function findApprovalForDecision(prisma: AdminOperationsDbClient, a
   });
 }
 
+export type ProjectAdminOperationRecord = Awaited<
+  ReturnType<typeof listAdminOperationsByProject>
+>[number];
+
+export async function listAdminOperationsByProject(
+  prisma: AdminOperationsDbClient,
+  input: {
+    projectId: string;
+    limit: number;
+    status?: AdminOperationStatusValue;
+    operationName?: string;
+    cursor?: {
+      createdAt: Date;
+      id: string;
+    };
+  },
+) {
+  const where: Prisma.AdminOperationWhereInput = {
+    targetProjectId: input.projectId,
+  };
+
+  if (input.status !== undefined) {
+    where.status = input.status;
+  }
+
+  if (input.operationName !== undefined) {
+    where.operationName = input.operationName;
+  }
+
+  if (input.cursor !== undefined) {
+    where.OR = [
+      {
+        createdAt: {
+          lt: input.cursor.createdAt,
+        },
+      },
+      {
+        createdAt: input.cursor.createdAt,
+        id: {
+          lt: input.cursor.id,
+        },
+      },
+    ];
+  }
+
+  return prisma.adminOperation.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: input.limit,
+    select: {
+      id: true,
+      operationName: true,
+      status: true,
+      reason: true,
+      ticketRef: true,
+      sourceChannel: true,
+      operatorUserId: true,
+      servicePrincipalId: true,
+      targetUserId: true,
+      targetSessionId: true,
+      correlationId: true,
+      errorCode: true,
+      createdAt: true,
+      updatedAt: true,
+      approval: {
+        select: {
+          id: true,
+          status: true,
+          requestedByUserId: true,
+          approvedByUserId: true,
+          requestedAt: true,
+          decidedAt: true,
+          expiresAt: true,
+        },
+      },
+    },
+  });
+}
+
 export async function listPendingApprovals(
   prisma: AdminOperationsDbClient,
   input: {

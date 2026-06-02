@@ -7,9 +7,11 @@ import {
 import { getSessionCookieName } from '../auth/auth.cookies.js';
 import {
   createProjectMembershipRequestSchema,
+  listProjectAdminOperationsQuerySchema,
   listProjectAuditLogsQuerySchema,
   listProjectMembershipsQuerySchema,
   projectAccessResponseSchema,
+  projectAdminOperationListResponseSchema,
   projectAuditLogListResponseSchema,
   projectMembershipListResponseSchema,
   projectMembershipParamsSchema,
@@ -20,6 +22,7 @@ import {
 import {
   createProjectMembership,
   getProjectAccess,
+  listProjectAdminOperations,
   listProjectMembershipAuditLogs,
   listProjectMemberships,
   reactivateProjectMembership,
@@ -68,6 +71,20 @@ export const projectMembershipRoutes: FastifyPluginCallback = (app, _options, do
     });
 
     return reply.status(200).send(projectAuditLogListResponseSchema.parse(result));
+  });
+
+  app.get('/projects/:slug/admin-operations', async (request, reply) => {
+    const params = projectSlugParamsSchema.parse(request.params);
+    const query = listProjectAdminOperationsQuerySchema.parse(request.query);
+    const authenticatedSession = await requireRequestAuth(params.slug, request.cookies);
+
+    const result = await listProjectAdminOperations(app.prisma, {
+      actorUserId: authenticatedSession.user.id,
+      projectSlug: params.slug,
+      query,
+    });
+
+    return reply.status(200).send(projectAdminOperationListResponseSchema.parse(result));
   });
 
   app.post('/projects/:slug/memberships', async (request, reply) => {

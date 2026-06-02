@@ -122,6 +122,63 @@ export const projectAuditLogListResponseSchema = z.object({
   }),
 });
 
+export const adminOperationStatusSchema = z.enum([
+  'COMPLETED',
+  'PENDING_APPROVAL',
+  'DENIED',
+  'FAILED',
+]);
+
+export const listProjectAdminOperationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().trim().min(1).optional(),
+  status: adminOperationStatusSchema.optional(),
+  operationName: z.string().trim().min(1).optional(),
+});
+
+export const projectAdminOperationApprovalSchema = z.object({
+  approvalId: z.string(),
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']),
+  requestedByUserId: z.string().nullable(),
+  approvedByUserId: z.string().nullable(),
+  requestedAt: z.iso.datetime(),
+  decidedAt: z.iso.datetime().nullable(),
+  expiresAt: z.iso.datetime(),
+});
+
+export const projectAdminOperationItemSchema = z.object({
+  operationId: z.string(),
+  operationName: z.string(),
+  status: adminOperationStatusSchema,
+  reason: z.string().nullable(),
+  ticketRef: z.string().nullable(),
+  sourceChannel: z.string().nullable(),
+  operatorUserId: z.string().nullable(),
+  servicePrincipalId: z.string().nullable(),
+  targetUserId: z.string().nullable(),
+  targetSessionId: z.string().nullable(),
+  correlationId: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  approval: projectAdminOperationApprovalSchema.nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const projectAdminOperationListResponseSchema = z.object({
+  project: projectSummarySchema,
+  items: z.array(projectAdminOperationItemSchema),
+  page: z.object({
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+    limit: z.number().int().min(1).max(50),
+  }),
+});
+
+export type ListProjectAdminOperationsQuery = z.infer<typeof listProjectAdminOperationsQuerySchema>;
+export type ProjectAdminOperationListResponse = z.infer<
+  typeof projectAdminOperationListResponseSchema
+>;
+
 export type ProjectSlugParams = z.infer<typeof projectSlugParamsSchema>;
 export type ProjectMembershipParams = z.infer<typeof projectMembershipParamsSchema>;
 export type ListProjectMembershipsQuery = z.infer<typeof listProjectMembershipsQuerySchema>;
