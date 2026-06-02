@@ -158,6 +158,7 @@ export const projectAdminOperationItemSchema = z.object({
   targetUserId: z.string().nullable(),
   targetSessionId: z.string().nullable(),
   correlationId: z.string().nullable(),
+  policyVersion: z.string().nullable(),
   errorCode: z.string().nullable(),
   approval: projectAdminOperationApprovalSchema.nullable(),
   createdAt: z.iso.datetime(),

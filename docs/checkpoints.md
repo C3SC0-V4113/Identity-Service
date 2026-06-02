@@ -132,8 +132,6 @@
 ## Next slices
 
 - Define a retention/export/pruning policy for the admin audit trail as it grows.
-- Make the risk policy data-driven (use `AdminOperation.policyVersion`) instead
-  of hard-coded per-operation classification.
 - Reintroduce a two-operator approval rule if a second operational identity is
   ever connected (today it is a single-bot two-step confirmation guard).
 
@@ -191,6 +189,10 @@
 - Every admin-surface mutation carries `reason` + `idempotencyKey` and emits an
   append-only audit event reconstructable by `operationId`/`correlationId`;
   request/result snapshots are stored redacted of secrets.
+- Risk classification is centralized in `admin-operations.policy.ts`
+  (`classifyOperationRisk`), not hard-coded in handlers, and defaults to
+  high-risk for any unclassified operation. The resolved `policyVersion` is
+  persisted on every `AdminOperation`.
 - High-risk admin operations (`assignProjectRole` to admin, mass `revokeSession`,
   `banUser`, `readmit`) require a deliberate confirmation step via `decideApproval`
   before they take effect. This is a two-step guard, not a two-person rule: the

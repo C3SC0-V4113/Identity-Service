@@ -28,6 +28,7 @@ import {
 } from '../project-memberships/project-memberships.services.js';
 import type { AdminTargetProject } from './admin-operations.guards.js';
 import { requireTargetProjectById } from './admin-operations.guards.js';
+import { classifyOperationRisk } from './admin-operations.policy.js';
 import {
   findApprovalForDecision,
   findOperationByIdForResponse,
@@ -78,6 +79,7 @@ interface OperationContext {
   envelope: AdminMutationEnvelope;
   project: AdminTargetProject;
   correlationId: string | null;
+  policyVersion: string;
 }
 
 interface ExecuteAdminMutationParams extends OperationContext {
@@ -110,12 +112,14 @@ export async function createUserOperation(
   correlationId: string | null,
 ): Promise<AdminMutationResponse> {
   const project = await requireTargetProjectById(prisma, request.targetProjectId);
+  const risk = classifyOperationRisk({ operationName: 'auth.createUser' });
 
   return executeAdminMutation(prisma, principal, {
     operationName: 'auth.createUser',
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload: {
       email: request.payload.email,
       displayName: request.payload.displayName ?? null,
@@ -294,6 +298,7 @@ function baseOperationFields(principal: AuthenticatedServicePrincipal, ctx: Oper
     reason: ctx.envelope.reason,
     ticketRef: ctx.envelope.ticketRef ?? null,
     targetProjectId: ctx.project.id,
+    policyVersion: ctx.policyVersion,
   };
 }
 
@@ -446,13 +451,16 @@ export async function banUserOperation(
     });
   }
 
+  const risk = classifyOperationRisk({ operationName: 'auth.banUser' });
+
   return runApprovalGatedMutation(prisma, principal, {
     operationName: 'auth.banUser',
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload: { userId: request.payload.userId },
-    requiredApprovalLevel: 'confirmation',
+    requiredApprovalLevel: risk.requiredApprovalLevel,
     targetUserId: request.payload.userId,
     pendingMessage: 'Ban requested; awaiting confirmation',
   });
@@ -465,12 +473,14 @@ export async function unbanUserOperation(
   correlationId: string | null,
 ): Promise<AdminMutationResponse> {
   const project = await requireTargetProjectById(prisma, request.targetProjectId);
+  const risk = classifyOperationRisk({ operationName: 'auth.unbanUser' });
 
   return executeAdminMutation(prisma, principal, {
     operationName: 'auth.unbanUser',
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload: { userId: request.payload.userId },
     execute: async (tx) => {
       const existing = await tx.user.findUnique({
@@ -505,16 +515,20 @@ export async function assignProjectRoleOperation(
   const project = await requireTargetProjectById(prisma, request.targetProjectId);
   const roleCodes = request.payload.roleCodes;
   const redactedPayload = { userId: request.payload.userId, roleCodes };
+  const risk = classifyOperationRisk({
+    operationName: 'auth.assignProjectRole',
+    assignsAdminRole: roleCodes.includes('admin'),
+  });
 
-  // High risk only when an admin role is being granted (ADR 0008 risk policy).
-  if (roleCodes.includes('admin')) {
+  if (risk.highRisk) {
     return runApprovalGatedMutation(prisma, principal, {
       operationName: 'auth.assignProjectRole',
       envelope: request,
       project,
       correlationId,
+      policyVersion: risk.policyVersion,
       redactedPayload,
-      requiredApprovalLevel: 'confirmation',
+      requiredApprovalLevel: risk.requiredApprovalLevel,
       targetUserId: request.payload.userId,
       pendingPayloadJson: { roleCodes },
       pendingMessage: 'Admin role assignment requested; awaiting confirmation',
@@ -526,6 +540,7 @@ export async function assignProjectRoleOperation(
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload,
     execute: (tx) =>
       executeAssignProjectRole(tx, {
@@ -543,12 +558,14 @@ export async function revokeProjectAccessOperation(
   correlationId: string | null,
 ): Promise<AdminMutationResponse> {
   const project = await requireTargetProjectById(prisma, request.targetProjectId);
+  const risk = classifyOperationRisk({ operationName: 'auth.revokeProjectAccess' });
 
   return executeAdminMutation(prisma, principal, {
     operationName: 'auth.revokeProjectAccess',
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload: { userId: request.payload.userId },
     execute: (tx) =>
       executeRevokeProjectAccess(tx, { projectId: project.id, userId: request.payload.userId }),
@@ -562,18 +579,19 @@ export async function readmitMembershipOperation(
   correlationId: string | null,
 ): Promise<AdminMutationResponse> {
   const project = await requireTargetProjectById(prisma, request.targetProjectId);
+  const risk = classifyOperationRisk({ operationName: 'auth.readmitProjectMembership' });
 
-  // Readmission is always high risk (ADR 0009).
   return runApprovalGatedMutation(prisma, principal, {
     operationName: 'auth.readmitProjectMembership',
     envelope: request,
     project,
     correlationId,
+    policyVersion: risk.policyVersion,
     redactedPayload: {
       userId: request.payload.userId,
       roleCodes: request.payload.roleCodes ?? null,
     },
-    requiredApprovalLevel: 'confirmation',
+    requiredApprovalLevel: risk.requiredApprovalLevel,
     targetUserId: request.payload.userId,
     pendingPayloadJson: { roleCodes: request.payload.roleCodes ?? null },
     pendingMessage: 'Membership readmission requested; awaiting confirmation',
@@ -591,11 +609,16 @@ export async function revokeSessionOperation(
   // Revoking a single session is low risk; a mass (per-user) revoke is high risk.
   if (request.payload.sessionId !== undefined) {
     const sessionId = request.payload.sessionId;
+    const risk = classifyOperationRisk({
+      operationName: 'auth.revokeSession',
+      massSessionRevoke: false,
+    });
     return executeAdminMutation(prisma, principal, {
       operationName: 'auth.revokeSession',
       envelope: request,
       project,
       correlationId,
+      policyVersion: risk.policyVersion,
       redactedPayload: { sessionId },
       execute: (tx) => executeRevokeSingleSession(tx, { projectId: project.id, sessionId }),
     });
@@ -603,13 +626,18 @@ export async function revokeSessionOperation(
 
   if (request.payload.userId !== undefined) {
     const userId = request.payload.userId;
+    const risk = classifyOperationRisk({
+      operationName: 'auth.revokeSession',
+      massSessionRevoke: true,
+    });
     return runApprovalGatedMutation(prisma, principal, {
       operationName: 'auth.revokeSession',
       envelope: request,
       project,
       correlationId,
+      policyVersion: risk.policyVersion,
       redactedPayload: { userId },
-      requiredApprovalLevel: 'confirmation',
+      requiredApprovalLevel: risk.requiredApprovalLevel,
       targetUserId: userId,
       pendingMessage: 'Mass session revocation requested; awaiting confirmation',
     });

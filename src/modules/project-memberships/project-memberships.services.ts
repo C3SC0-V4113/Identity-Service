@@ -722,6 +722,7 @@ export async function listProjectAdminOperations(
       targetUserId: operation.targetUserId,
       targetSessionId: operation.targetSessionId,
       correlationId: operation.correlationId,
+      policyVersion: operation.policyVersion,
       errorCode: operation.errorCode,
       approval:
         operation.approval === null

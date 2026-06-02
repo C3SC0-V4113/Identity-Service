@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../app.js';
 import { bootstrapServicePrincipal } from '../identity/bootstrap/service-principal-bootstrap.js';
 import { upsertProjectSeedData } from '../identity/bootstrap/project-seed.js';
+import { ADMIN_POLICY_VERSION } from './admin-operations.policy.js';
 
 describe('admin operations surface', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -103,11 +104,17 @@ describe('admin operations surface', () => {
           idempotencyKey: 'create-user-1',
         },
       },
-      select: { status: true, operationName: true, targetProjectId: true },
+      select: {
+        status: true,
+        operationName: true,
+        targetProjectId: true,
+        policyVersion: true,
+      },
     });
     expect(operation.status).toBe('COMPLETED');
     expect(operation.operationName).toBe('auth.createUser');
     expect(operation.targetProjectId).toBe(otherGptId);
+    expect(operation.policyVersion).toBe(ADMIN_POLICY_VERSION);
 
     const auditEvents = await app.prisma.adminActionAudit.findMany({
       where: { operationId: body.operationId },

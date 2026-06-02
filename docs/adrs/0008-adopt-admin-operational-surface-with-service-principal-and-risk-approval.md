@@ -120,13 +120,17 @@ envelope, idempotency, risk policy, approval, and audit around that logic.
 
 ### Risk-based approval
 
+- Risk classification is centralized in `admin-operations.policy.ts`
+  (`classifyOperationRisk`), the single source of truth; handlers must not
+  hard-code their own rules. The resolved `policyVersion` (e.g.
+  `ADMIN_POLICY_VERSION`) is stored on every `AdminOperation` so an audited
+  action ties back to the policy that classified it.
 - Reads and low-risk mutations execute directly.
 - High-risk mutations create a pending `AdminApproval` and apply **no** side
-  effects until a separate decision. Minimum high-risk set in v1:
-  `assignProjectRole` to an admin role, `revokeSession` with mass scope,
-  `banUser` in any scope, `readmitProjectMembership`, and anything a policy marks
-  `high_risk`. `identity-service` decides the final risk and may escalate even
-  when the operation name is the same.
+  effects until a separate decision. High-risk set in v1: `assignProjectRole` to
+  an admin role, `revokeSession` with mass scope, `banUser` in any scope, and
+  `readmitProjectMembership`. The policy **defaults to safe**: any unclassified
+  operation is treated as high-risk so it can never execute directly.
 - `decideApproval` is a deliberate second call that confirms (approve) or
   cancels (reject) the pending action — a two-step guard, not a two-person rule.
   The portfolio runs a single `openclaw-ops` bot, so the same operator may

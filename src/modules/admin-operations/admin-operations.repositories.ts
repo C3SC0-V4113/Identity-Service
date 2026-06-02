@@ -73,6 +73,7 @@ export interface RecordTerminalOperationInput {
   targetProjectId: string;
   targetUserId: string | null;
   targetSessionId: string | null;
+  policyVersion: string;
   errorCode: string | null;
   requestSnapshotJson: Prisma.InputJsonValue;
   resultSnapshotJson: Prisma.InputJsonValue;
@@ -109,6 +110,7 @@ export async function recordTerminalOperation(
             targetProjectId: input.targetProjectId,
             targetUserId: input.targetUserId,
             targetSessionId: input.targetSessionId,
+            policyVersion: input.policyVersion,
             errorCode: input.errorCode,
           },
           select: {
@@ -128,6 +130,7 @@ export async function recordTerminalOperation(
             ticketRef: input.ticketRef,
             targetUserId: input.targetUserId,
             targetSessionId: input.targetSessionId,
+            policyVersion: input.policyVersion,
             errorCode: input.errorCode,
           },
           select: {
@@ -215,6 +218,7 @@ export interface RecordPendingApprovalOperationInput {
   requestSnapshotJson: Prisma.InputJsonValue;
   pendingResultSnapshotJson: Prisma.InputJsonValue;
   pendingPayloadJson?: Prisma.InputJsonValue;
+  policyVersion: string;
   requiredApprovalLevel: string;
   expiresAt: Date;
 }
@@ -243,6 +247,7 @@ export async function recordPendingApprovalOperation(
       targetUserId: input.targetUserId,
       targetSessionId: input.targetSessionId,
       pendingPayloadJson: input.pendingPayloadJson,
+      policyVersion: input.policyVersion,
     },
     select: {
       id: true,
@@ -376,6 +381,7 @@ export async function listAdminOperationsByProject(
       targetUserId: true,
       targetSessionId: true,
       correlationId: true,
+      policyVersion: true,
       errorCode: true,
       createdAt: true,
       updatedAt: true,
