@@ -33,6 +33,13 @@ Current design references:
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
 
+Integration guides (share these with consumer projects):
+
+- [User App Integration Guide](./docs/integration-user-apps.md) — for front-ends
+  like `other-gpt` / `cost-console` (cookie/session auth).
+- [Admin & MCP Integration Guide](./docs/integration-admin-mcp.md) — for
+  `mcp-server`, operators, and the local admin commands.
+
 Current implementation highlights:
 
 - Project-scoped auth endpoints under `/projects/:slug/auth/*`.
