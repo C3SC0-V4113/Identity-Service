@@ -19,6 +19,7 @@ export default defineConfig(
             'prisma/seed.ts',
             'prisma/bootstrap-project-admin.ts',
             'prisma/bootstrap-service-principal.ts',
+            'prisma/prune-admin-operations.ts',
             'vitest.config.ts',
           ],
         },
@@ -54,6 +55,7 @@ export default defineConfig(
       'src/modules/identity/bootstrap/service-principal-bootstrap.ts',
       'prisma/bootstrap-project-admin.ts',
       'prisma/bootstrap-service-principal.ts',
+      'prisma/prune-admin-operations.ts',
       'src/**/*.test.ts',
     ],
     rules: {

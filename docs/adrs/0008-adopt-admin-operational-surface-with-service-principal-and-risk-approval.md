@@ -242,6 +242,11 @@ The slice is documented in full here and delivered incrementally:
   audit logs, and admin session listing.
 - The auth tools must not expose arbitrary queries or write directly to
   PostgreSQL outside the defined operations.
+- Audit-trail retention is a local maintenance script
+  (`admin-operations.retention.ts` + `prisma/prune-admin-operations.ts`,
+  `npm run db:prune-admin-operations`), not an HTTP surface. It prunes only
+  terminal operations older than a window — never `PENDING_APPROVAL` — cascading
+  to their audit/approval rows, with `--dry-run` and `--export` for archival.
 - Machine operations audit exclusively to `AdminActionAudit`/`AdminOperation`;
   they do not write `ProjectMembershipAuditLog`. So `createUser`'s project
   admission is visible in the admin trail (by `operationId`) but not in the

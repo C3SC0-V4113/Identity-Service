@@ -131,9 +131,9 @@
 
 ## Next slices
 
-- Define a retention/export/pruning policy for the admin audit trail as it grows.
 - Reintroduce a two-operator approval rule if a second operational identity is
-  ever connected (today it is a single-bot two-step confirmation guard).
+  ever connected (today it is a single-bot two-step confirmation guard). This is
+  deferred until that second identity exists; there is no other planned slice.
 
 ## Closed decisions
 
@@ -193,6 +193,11 @@
   (`classifyOperationRisk`), not hard-coded in handlers, and defaults to
   high-risk for any unclassified operation. The resolved `policyVersion` is
   persisted on every `AdminOperation`.
+- Admin audit-trail retention is a local maintenance script
+  (`npm run db:prune-admin-operations`), not an HTTP endpoint. It prunes only
+  terminal operations (`COMPLETED`/`DENIED`/`FAILED`) older than the retention
+  window — never `PENDING_APPROVAL` — cascading to their audit/approval rows, and
+  supports `--dry-run` and `--export <file>` (archive before deleting).
 - High-risk admin operations (`assignProjectRole` to admin, mass `revokeSession`,
   `banUser`, `readmit`) require a deliberate confirmation step via `decideApproval`
   before they take effect. This is a two-step guard, not a two-person rule: the
@@ -249,6 +254,14 @@
 - The service-principal bootstrap prints the bearer token once; only its hash is
   stored. Re-running for the same `--slug` rotates the secret and re-syncs the
   project allow-list, which invalidates the previous token.
+
+- Prune the admin audit trail (terminal operations older than the window). Use
+  `--dry-run` to preview and `--export <file>` to archive before deleting:
+
+  ```powershell
+  npm run db:prune-admin-operations -- --older-than-days 90 --dry-run
+  npm run db:prune-admin-operations -- --older-than-days 90 --export admin-ops-archive.json
+  ```
 
 ## Open questions
 

@@ -123,4 +123,13 @@ Current implementation highlights:
    npm run dev
    ```
 
+Maintenance: prune the admin audit trail (terminal operations older than the
+retention window; never pending approvals). Use `--dry-run` to preview and
+`--export <file>` to archive before deleting:
+
+```powershell
+npm run db:prune-admin-operations -- --older-than-days 90 --dry-run
+npm run db:prune-admin-operations -- --older-than-days 90 --export admin-ops-archive.json
+```
+
 `npm run dev` and `npm start` load `.env` automatically when the file exists in the project root.

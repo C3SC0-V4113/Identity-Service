@@ -21,6 +21,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:bootstrap-admin": "tsx prisma/bootstrap-project-admin.ts",
     "db:bootstrap-service-principal": "tsx prisma/bootstrap-service-principal.ts",
+    "db:prune-admin-operations": "tsx prisma/prune-admin-operations.ts",
     "prepare": "husky"
   },
   "lint-staged": {

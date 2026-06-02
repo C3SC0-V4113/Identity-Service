@@ -324,6 +324,101 @@ export type ProjectAdminOperationRecord = Awaited<
   ReturnType<typeof listAdminOperationsByProject>
 >[number];
 
+/**
+ * Operations in a terminal state are safe to prune; `PENDING_APPROVAL` rows are
+ * never pruned regardless of age, since they may still be actionable.
+ */
+export const PRUNABLE_OPERATION_STATUSES = ['COMPLETED', 'DENIED', 'FAILED'] as const;
+
+function prunableWhere(olderThan: Date): Prisma.AdminOperationWhereInput {
+  return {
+    status: { in: [...PRUNABLE_OPERATION_STATUSES] },
+    createdAt: { lt: olderThan },
+  };
+}
+
+export async function countPrunableOperations(
+  prisma: AdminOperationsDbClient,
+  input: { olderThan: Date },
+): Promise<number> {
+  return prisma.adminOperation.count({ where: prunableWhere(input.olderThan) });
+}
+
+export type PrunableOperationRecord = Awaited<ReturnType<typeof findPrunableOperations>>[number];
+
+export async function findPrunableOperations(
+  prisma: AdminOperationsDbClient,
+  input: { olderThan: Date },
+) {
+  return prisma.adminOperation.findMany({
+    where: prunableWhere(input.olderThan),
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      operationName: true,
+      status: true,
+      servicePrincipalId: true,
+      operatorUserId: true,
+      sourceChannel: true,
+      reason: true,
+      ticketRef: true,
+      targetProjectId: true,
+      targetUserId: true,
+      targetSessionId: true,
+      correlationId: true,
+      policyVersion: true,
+      errorCode: true,
+      createdAt: true,
+      updatedAt: true,
+      approval: {
+        select: {
+          id: true,
+          status: true,
+          requestedByUserId: true,
+          approvedByUserId: true,
+          requestedAt: true,
+          decidedAt: true,
+          decisionReason: true,
+          expiresAt: true,
+        },
+      },
+      auditEvents: {
+        orderBy: { occurredAt: 'asc' },
+        select: {
+          id: true,
+          eventType: true,
+          occurredAt: true,
+          actorUserId: true,
+          detail: true,
+          errorCode: true,
+          requestSnapshotJson: true,
+          resultSnapshotJson: true,
+        },
+      },
+    },
+  });
+}
+
+export async function deletePrunableOperations(
+  prisma: AdminOperationsDbClient,
+  input: { olderThan: Date },
+): Promise<number> {
+  const result = await prisma.adminOperation.deleteMany({ where: prunableWhere(input.olderThan) });
+  return result.count;
+}
+
+export async function deleteAdminOperationsByIds(
+  prisma: AdminOperationsDbClient,
+  ids: readonly string[],
+): Promise<number> {
+  if (ids.length === 0) {
+    return 0;
+  }
+
+  const result = await prisma.adminOperation.deleteMany({ where: { id: { in: [...ids] } } });
+  return result.count;
+}
+
 export async function listAdminOperationsByProject(
   prisma: AdminOperationsDbClient,
   input: {
