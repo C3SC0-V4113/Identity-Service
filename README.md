@@ -39,6 +39,9 @@ Integration guides (share these with consumer projects):
   like `other-gpt` / `cost-console` (cookie/session auth).
 - [Admin & MCP Integration Guide](./docs/integration-admin-mcp.md) — for
   `mcp-server`, operators, and the local admin commands.
+- [Shared Auth Packages (Design Sketch)](./docs/shared-auth-packages.md) —
+  proposed surface for future `@org/contracts` / `@org/auth-sdk` (platform
+  ADR 0002); not built yet.
 
 Current implementation highlights:
 
