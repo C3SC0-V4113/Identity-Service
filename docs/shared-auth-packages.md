@@ -269,6 +269,27 @@ export interface UserAuthClient {
 }
 
 export function createUserAuthClient(options: AuthClientOptions): UserAuthClient;
+
+/** A parsed Set-Cookie, framework-agnostic so it maps onto any cookie store. */
+export interface SetCookieEntry {
+  name: string;
+  value: string;
+  options: {
+    maxAge?: number;
+    expires?: Date;
+    path?: string;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: 'lax' | 'strict' | 'none';
+  };
+}
+
+/**
+ * Parse raw `AuthResult.setCookie` strings into entries you can hand to a cookie
+ * store (e.g. Next.js `cookies().set(name, value, options)`), without the package
+ * importing Next or hardcoding the cookie's attributes.
+ */
+export function toCookieEntries(setCookie: string[]): SetCookieEntry[];
 ```
 
 ## Next.js integration patterns (other-gpt)
@@ -283,14 +304,48 @@ default because (1) `identity-service` currently has CORS disabled
 (`origin: false`), and (2) the `httpOnly` session cookie stays same-origin to the
 browser (the API origin is never exposed).
 
-- **Login / register / logout:** call the client server-side, then copy
-  `result.setCookie` onto the Next.js response so the browser stores the cookie on
-  other-gpt's own origin.
-- **Authenticated reads / gating:** read the incoming cookie from `next/headers`
+- **Mutations that set the cookie (login/register/logout):** call the client
+  server-side, then apply `result.setCookie` to the response (Route Handler) or
+  the cookie store (Server Action) so the browser stores it on other-gpt's origin.
+- **Authenticated reads / gating:** read the incoming cookie via `await cookies()`
   (or the middleware request) and pass it as `ctx.cookie`.
 
+App Router notes: `cookies()` is **async in Next.js 15** (`await cookies()`); only
+Server Actions and Route Handlers may _write_ cookies (Server Components are
+read-only); keep secrets server-side (no `NEXT_PUBLIC_*`).
+
+#### Server Action (form submit)
+
 ```ts
-// app/api/auth/login/route.ts — relays the session cookie to the browser
+// app/(auth)/actions.ts
+'use server';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { createUserAuthClient, toCookieEntries } from '@org/auth-sdk/user';
+
+const auth = createUserAuthClient({ baseUrl: process.env.IDENTITY_URL! });
+
+export async function loginAction(formData: FormData) {
+  const result = await auth.login('other-gpt', {
+    email: String(formData.get('email')),
+    password: String(formData.get('password')),
+  });
+
+  const cookieStore = await cookies(); // async in Next.js 15
+  for (const entry of toCookieEntries(result.setCookie)) {
+    cookieStore.set(entry.name, entry.value, entry.options);
+  }
+  redirect('/');
+}
+```
+
+Use it from a server form: `<form action={loginAction}>`. For inline error
+states, wrap it with `useActionState` and return an error instead of redirecting.
+
+#### Route Handler (proxy)
+
+```ts
+// app/api/auth/login/route.ts — relays the raw Set-Cookie verbatim
 import { createUserAuthClient } from '@org/auth-sdk/user';
 
 const auth = createUserAuthClient({ baseUrl: process.env.IDENTITY_URL! });
@@ -303,8 +358,28 @@ export async function POST(req: Request) {
 }
 ```
 
+#### Server Component (authenticated read)
+
+```tsx
+// app/page.tsx
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { createUserAuthClient } from '@org/auth-sdk/user';
+
+const auth = createUserAuthClient({ baseUrl: process.env.IDENTITY_URL! });
+
+export default async function Page() {
+  const cookie = (await cookies()).toString();
+  if (!(await auth.hasValidSession('other-gpt', { cookie }))) redirect('/login');
+  const me = await auth.getMe('other-gpt', { cookie });
+  return <p>Hello {me.user.email}</p>;
+}
+```
+
+#### Middleware (route gating, edge)
+
 ```ts
-// middleware.ts — gate routes with the lightweight session check (edge-safe)
+// middleware.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createUserAuthClient } from '@org/auth-sdk/user';
 
@@ -316,7 +391,16 @@ export async function middleware(req: NextRequest) {
   });
   return ok ? NextResponse.next() : NextResponse.redirect(new URL('/login', req.url));
 }
+
+// Scope the gate so it doesn't hit the network on every asset/route.
+export const config = {
+  matcher: ['/((?!login|api|_next/static|_next/image|favicon.ico).*)'],
+};
 ```
+
+Treat middleware as a **coarse gate** only: it runs on the edge and calls the
+network per matched navigation. The authoritative check still happens in the
+Server Component / Route Handler that actually reads `getMe`/`getAccess`.
 
 ### Alternative: direct browser → identity-service
 
@@ -387,6 +471,77 @@ Ergonomics the admin client should provide:
   the real OpenClaw operator; the SDK should not invent it.
 - **Idempotency-key reuse is a client bug.** Surface `409
 ADMIN_IDEMPOTENCY_KEY_REUSED` clearly.
+
+## Distribution: repos, registry, and versioning
+
+> Scope note: `@org/*` in this document is a placeholder. With a single
+> maintainer and no organization, use your **personal npm scope** (your
+> username), e.g. `@yourname/contracts` and `@yourname/auth-sdk`.
+
+These libraries contain **no secrets** — `@org/contracts` is types/Zod schemas and
+`@org/auth-sdk` is a thin HTTP client (the admin client _receives_ a token at
+runtime, it never embeds one), and the API shape is already meant to be shared
+(the integration guides). Keeping them private would protect nothing, so for a
+solo maintainer publishing them publicly is the simplest path and leaks nothing
+sensitive.
+
+### Where they live
+
+ADR 0002 keeps _products_ in separate repos but does not require one repo per
+shared library. Recommended: a single **packages monorepo** (e.g. a `packages`
+repo) using a workspace tool (pnpm workspaces + Turborepo, or Nx) that hosts the related
+libraries together — `@org/contracts`, `@org/auth-sdk`, and later `@org/ai-sdk` /
+`@org/provider-catalog`.
+
+Rationale: contracts and the SDK change together, so atomic commits and one CI
+pipeline beat coordinating several tiny repos. Products (`identity-service`,
+`other-gpt`, `mcp-server`) stay in their own repos and consume the published
+packages. One-repo-per-package is the stricter alternative — more overhead, only
+worth it when a library needs fully independent ownership.
+
+Bootstrapping note: the schemas start in `identity-service`. Phase 1 extracts them
+into `@org/contracts`; phase 2 has `identity-service` depend back on the package so
+there is a single source.
+
+### Registry: public npm under a personal scope (recommended)
+
+- Publish to **public npm** under your personal scope (`@yourname/*`). It is free,
+  needs no registry infrastructure, and — crucially — consumers need **no `.npmrc`
+  and no auth token**, so installing in `other-gpt` / `cost-console` / `mcp-server`
+  is friction-free.
+- Scoped packages default to "restricted", so publish them public explicitly:
+
+```bash
+npm publish --access public
+```
+
+(or add `"publishConfig": { "access": "public" }` to each `package.json`).
+
+- **If you ever need privacy later:** GitHub Packages on a personal account
+  (private repo; consumers then need `.npmrc` + a `read:packages` token) or a paid
+  npm private plan. Moving the scope into an npm org later does **not** require
+  renaming the packages, so starting public is not a lock-in.
+
+### Versioning and release
+
+- **SemVer** managed with [Changesets](https://github.com/changesets/changesets)
+  for versions and changelogs across the workspace. `@org/contracts` is the wire
+  contract: a breaking shape change is a **major** bump that should ripple into the
+  SDK.
+- Publish from **CI on tag/release** (never from a laptop), with npm
+  **provenance** enabled, a committed lockfile, and pinned dependencies.
+
+### Security practices (these still apply when public)
+
+- **No secrets in packages.** The admin client only _accepts_ a token at runtime;
+  it never embeds one. Keep tokens in server-only env (never `NEXT_PUBLIC_*`).
+- **Server-only admin entry.** `@org/auth-sdk/admin` must not be reachable from a
+  browser/edge bundle (separate export; add a lint/CI check that frontends never
+  import it).
+- **Minimal, audited dependencies** (ideally just `zod`); enable Dependabot/Renovate
+  and `npm audit` in the packages repo.
+- **2FA on the npm account**, and use a granular automation/publish token only in
+  CI (not on a laptop) to publish.
 
 ## Open questions for the package
 
