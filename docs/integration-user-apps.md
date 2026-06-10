@@ -8,6 +8,34 @@ auth surface only. Administrative/machine integration lives in
 Related decisions: [ADR 0002](./adrs/0002-adopt-session-based-portfolio-identity.md),
 [ADR 0007](./adrs/0007-scope-auth-to-project-and-move-session-control-to-admins.md).
 
+## Using the published SDK (recommended)
+
+You do **not** have to hand-write the HTTP client. The cookie surface is published
+as a typed client:
+
+```bash
+npm install @cesco_valle/identity-auth-sdk
+```
+
+```ts
+import { createUserAuthClient } from '@cesco_valle/identity-auth-sdk/user';
+
+const auth = createUserAuthClient({ baseUrl: process.env.IDENTITY_URL! });
+await auth.login('other-gpt', { email, password }); // sets the session cookie
+const ok = await auth.hasValidSession('other-gpt'); // 204 → true, 401 → false
+```
+
+The SDK ships ready-made Next.js patterns (Server Action, Route Handler, Server
+Component, edge middleware) and reuses the same Zod contracts in
+[`@cesco_valle/identity-contracts`](https://www.npmjs.com/package/@cesco_valle/identity-contracts)
+that this service validates against, so client and server cannot drift. See the
+[SDK README](https://www.npmjs.com/package/@cesco_valle/identity-auth-sdk) for the
+full method table and runtime-specific examples.
+
+The rest of this document is the **wire reference** behind that client — read it to
+understand the endpoints, error codes, and deployment caveats, or to integrate
+without the SDK.
+
 ## Mental model
 
 - **Centralized identity, project-scoped access.** A `User` (identified by email)

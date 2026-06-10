@@ -211,6 +211,20 @@
   and appending to its audit history. Reusing the key for a _different_ operation
   is rejected with `409 ADMIN_IDEMPOTENCY_KEY_REUSED`. Callers use a unique key
   per distinct request.
+- The wire contracts are externalized as shared npm packages (platform ADR 0002)
+  and consumed back as the single source of truth. The `identity-packages` pnpm
+  monorepo publishes `@cesco_valle/identity-contracts` (Zod schemas/types) and
+  `@cesco_valle/identity-auth-sdk` (typed user/admin clients) to public npm; the
+  three `src/modules/**/*.schemas.ts` files are thin re-exports of
+  `@cesco_valle/identity-contracts`, so client and server validate against the same
+  definitions and cannot drift. Consumers (`other-gpt`, `cost-console`,
+  `mcp-server`) install the SDK instead of hand-writing DTOs/clients.
+- Production deployment targets Railway (primary), with Render/Fly.io/Koyeb as
+  alternatives and Railway Postgres/Neon/Supabase for the database. Schema is
+  applied with `prisma migrate deploy` as a release step (never `migrate dev`);
+  the app does not auto-migrate at boot. Cross-site browser deployments require
+  enabling CORS and switching the cookie to `sameSite=none; secure` (a code
+  follow-up), documented in [deployment.md](./deployment.md).
 
 ## Operational notes
 

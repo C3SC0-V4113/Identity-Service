@@ -12,13 +12,20 @@ authentication should rely on server-managed sessions that can be revoked and
 renewed over time. Stateless JWT authentication is not the intended primary
 product model for this service.
 
-The repository already includes the initial auth and project-membership
-surface on top of the Fastify + TypeScript base, environment validation,
-Prisma setup, health checks, and quality tooling. The machine-to-machine admin
-surface for `mcp-server`/`openclaw-ops` is being built incrementally (ADR 0008):
-service-principal auth, the common envelope, idempotency, and the direct-path
-operations are in place; risk-based approval and the remaining mutations are in
-progress.
+The repository already includes the auth and project-membership surface on top of
+the Fastify + TypeScript base, environment validation, Prisma setup, health
+checks, and quality tooling. The machine-to-machine admin surface for
+`mcp-server`/`openclaw-ops` is complete (ADR 0008/0009): service-principal auth,
+the common envelope, idempotency, append-only audit, risk-based approval, and the
+full operation family (including revoked-membership readmission) are in place.
+
+The wire contracts are published as shared npm packages and consumed back here as
+the single source of truth (platform ADR 0002):
+[`@cesco_valle/identity-contracts`](https://www.npmjs.com/package/@cesco_valle/identity-contracts)
+(Zod schemas/types) and
+[`@cesco_valle/identity-auth-sdk`](https://www.npmjs.com/package/@cesco_valle/identity-auth-sdk)
+(typed user/admin clients). The three `src/modules/**/*.schemas.ts` files
+re-export `@cesco_valle/identity-contracts`, so client and server cannot drift.
 
 Current design references:
 
@@ -32,6 +39,8 @@ Current design references:
 - [ADR 0009: Readmission of Revoked Memberships via Approval](./docs/adrs/0009-support-readmission-of-revoked-memberships-via-approval.md)
 - [Database Model](./docs/database-model.md)
 - [Checkpoints](./docs/checkpoints.md)
+- [Deployment Guide](./docs/deployment.md) — Railway (primary) + Render/Fly.io/Koyeb,
+  database options, and production/cross-site caveats.
 
 Integration guides (share these with consumer projects):
 
@@ -39,9 +48,9 @@ Integration guides (share these with consumer projects):
   like `other-gpt` / `cost-console` (cookie/session auth).
 - [Admin & MCP Integration Guide](./docs/integration-admin-mcp.md) — for
   `mcp-server`, operators, and the local admin commands.
-- [Shared Auth Packages (Design Sketch)](./docs/shared-auth-packages.md) —
-  proposed surface for future `@org/contracts` / `@org/auth-sdk` (platform
-  ADR 0002); not built yet.
+- [Shared Auth Packages (Design + Status)](./docs/shared-auth-packages.md) — the
+  published `@cesco_valle/identity-contracts` / `@cesco_valle/identity-auth-sdk`
+  packages (platform ADR 0002) and their design rationale.
 
 Current implementation highlights:
 

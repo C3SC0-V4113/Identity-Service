@@ -9,6 +9,45 @@ Related decisions:
 [ADR 0008](./adrs/0008-adopt-admin-operational-surface-with-service-principal-and-risk-approval.md),
 [ADR 0009](./adrs/0009-support-readmission-of-revoked-memberships-via-approval.md).
 
+## Using the published SDK (recommended)
+
+The machine-admin surface is published as a **server-only** typed client:
+
+```bash
+npm install @cesco_valle/identity-auth-sdk
+```
+
+```ts
+import { createAdminClient } from '@cesco_valle/identity-auth-sdk/admin';
+
+const admin = createAdminClient({
+  baseUrl: process.env.IDENTITY_URL!,
+  token: process.env.SP_TOKEN!, // service-principal bearer token
+});
+
+const res = await admin.banUser({
+  targetProjectId,
+  reason: 'abuse',
+  channel: 'telegram',
+  operatorUserId: 'op-1',
+  payload: { userId },
+});
+if (res.status === 'pending_approval') {
+  await admin.decideApproval(res.approvalId!, { decision: 'approve', operatorUserId: 'op-1' });
+}
+```
+
+It auto-fills `idempotencyKey` / `X-Correlation-Id`, returns the response envelope
+as data (so `denied` / `failed` are inspected, not thrown), and is split into a
+separate `/admin` entrypoint so a frontend bundle can never pull in the
+token-bearing client. **Never import `@cesco_valle/identity-auth-sdk/admin` into a
+browser/edge bundle.** See the
+[SDK README](https://www.npmjs.com/package/@cesco_valle/identity-auth-sdk) for the
+full method list and `mcp-server` guidance.
+
+The rest of this document is the **wire reference** behind that client — the
+envelope, risk policy, per-operation contracts, and local commands.
+
 ## Mental model
 
 - **`identity-service` is the authority.** It owns authorization, the risk

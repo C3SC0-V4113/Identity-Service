@@ -1,13 +1,21 @@
-# Shared Auth Packages (Design Sketch)
+# Shared Auth Packages (Design + Status)
 
-> **Status: proposal, not built.** This is a concrete sketch of the two shared
-> packages that [`platform-ai-architecture` ADR 0002](../../platform-ai-architecture/docs/adr/0002-adopt-multi-repo-portfolio-with-shared-packages.md)
-> envisions (`@org/contracts`, `@org/auth-sdk`), so that whoever creates that
-> package/repo has a ready starting point. Nothing here is published yet;
-> `identity-service` today exposes only the HTTP surface plus the
-> [user](./integration-user-apps.md) and [admin/MCP](./integration-admin-mcp.md)
-> integration guides. The shapes below mirror the real contracts in this repo
-> (the Zod schemas in `src/modules/**`).
+> **Status: built & published.** The two packages this document sketched are now
+> live on public npm and consumed by `identity-service`:
+>
+> - [`@cesco_valle/identity-contracts`](https://www.npmjs.com/package/@cesco_valle/identity-contracts)
+>   — the Zod schemas/types (the `@org/contracts` of
+>   [`platform-ai-architecture` ADR 0002](../../platform-ai-architecture/docs/adr/0002-adopt-multi-repo-portfolio-with-shared-packages.md)).
+> - [`@cesco_valle/identity-auth-sdk`](https://www.npmjs.com/package/@cesco_valle/identity-auth-sdk)
+>   — the typed user/admin clients (the `@org/auth-sdk`).
+>
+> They live in the `identity-packages` pnpm monorepo. `identity-service` now
+> **consumes** `@cesco_valle/identity-contracts` as the single source of truth: the
+> three `src/modules/**/*.schemas.ts` files are thin re-exports of the package, so
+> client and server cannot drift. For day-to-day usage prefer the package READMEs
+> and the [user](./integration-user-apps.md) / [admin-MCP](./integration-admin-mcp.md)
+> guides; the sections below remain as the **design rationale** (the `@org/*` names
+> are the original placeholders — the published scope is `@cesco_valle/*`).
 
 ## Why these two packages
 
