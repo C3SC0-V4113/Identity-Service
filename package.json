@@ -33,6 +33,7 @@
     ]
   },
   "dependencies": {
+    "@cesco_valle/identity-contracts": "^0.2.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.0.2",
