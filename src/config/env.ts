@@ -28,6 +28,9 @@ if (existsSync(envFilePath)) {
   }
 }
 
+/** Parse an env string into a boolean, accepting only `'true'` / `'false'`. */
+const envBoolean = z.enum(['true', 'false']).transform((value) => value === 'true');
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -35,6 +38,19 @@ const envSchema = z.object({
   DATABASE_URL: z.url(),
   SESSION_COOKIE_NAME: z.string().min(1).default('identity_service_session'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // Cross-origin allow-list for the browser surface. Unset/empty keeps CORS
+  // disabled (same-site / BFF default). Use `*` to reflect any origin, or a
+  // comma-separated list of explicit origins (recommended with credentials).
+  CORS_ORIGIN: z.string().optional(),
+  // Whether CORS responses allow credentials (cookies). Only relevant when
+  // CORS_ORIGIN is set; defaults on so the session cookie flows cross-origin.
+  CORS_CREDENTIALS: envBoolean.default(true),
+  // Session cookie SameSite. `none` is required for genuine cross-site use and
+  // forces `secure`. Defaults to `lax` (same-site).
+  COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+  // Override the `secure` cookie flag. When unset it follows
+  // `NODE_ENV === 'production'`; `sameSite=none` always forces it on.
+  COOKIE_SECURE: envBoolean.optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

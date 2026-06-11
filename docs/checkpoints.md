@@ -222,9 +222,15 @@
 - Production deployment targets Railway (primary), with Render/Fly.io/Koyeb as
   alternatives and Railway Postgres/Neon/Supabase for the database. Schema is
   applied with `prisma migrate deploy` as a release step (never `migrate dev`);
-  the app does not auto-migrate at boot. Cross-site browser deployments require
-  enabling CORS and switching the cookie to `sameSite=none; secure` (a code
-  follow-up), documented in [deployment.md](./deployment.md).
+  the app does not auto-migrate at boot. Documented in [deployment.md](./deployment.md).
+- Cross-site browser deployments are supported by configuration, not a rebuild.
+  `CORS_ORIGIN` (comma-separated allow-list; unset = disabled) and
+  `CORS_CREDENTIALS` (default `true`) drive `@fastify/cors`; `COOKIE_SAMESITE`
+  (`lax` default) and `COOKIE_SECURE` drive the session cookie, with
+  `sameSite=none` forcing `secure`. All default to the same-site / BFF behavior, so
+  existing deployments are unaffected. Pure helpers `parseCorsOrigin`
+  (`src/shared/http/cors.ts`) and `resolveSessionCookieSecure`
+  (`src/modules/auth/auth.cookies.ts`) are unit-tested.
 
 ## Operational notes
 

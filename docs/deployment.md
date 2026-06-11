@@ -124,33 +124,45 @@ Whatever you pick, `prisma migrate deploy` applies the committed migrations in
 
 ## Production checklist & cross-site caveats
 
-The current defaults assume the front-end and the API are served on the **same
-site** (e.g. behind one domain via the BFF pattern in the integration guides). For
-that topology nothing extra is needed. For a genuinely cross-origin browser
-deployment, mind these — two of them require a small **code change**, not just
-config:
+The defaults assume the front-end and the API are served on the **same site**
+(e.g. behind one domain via the BFF pattern in the integration guides). For that
+topology nothing extra is needed. A genuinely cross-origin browser deployment is
+supported **by configuration** (no code change) via these env vars:
 
-- **CORS is disabled.** [`src/app.ts`](../src/app.ts) registers CORS with
-  `origin: false`. Cross-origin browser calls need CORS enabled for the specific
-  front-end origin **with `credentials: true`**. (Server-to-server callers such as
-  `mcp-server` and a same-origin BFF are unaffected.)
-- **Cookie `sameSite` is `lax`.** [`src/modules/auth/auth.cookies.ts`](../src/modules/auth/auth.cookies.ts)
-  sets `sameSite: 'lax'`. True cross-site requests need `sameSite=none; secure`,
-  which is a code change. `lax` covers same-site usage.
-- **`secure` requires HTTPS.** In production the cookie is `secure`
-  (`NODE_ENV === 'production'`), so the API **must** be served over HTTPS. Railway,
-  Render, Fly, and Koyeb all provide TLS on their default domains.
+- **CORS.** [`src/app.ts`](../src/app.ts) reads `CORS_ORIGIN`. Unset/empty keeps
+  CORS disabled (the same-site default). Set it to the front-end origin(s) —
+  comma-separated, e.g. `https://other-gpt.example.com` — to allow cross-origin
+  browser calls. `CORS_CREDENTIALS` (default `true`) keeps cookies flowing.
+  `*` reflects any origin. (Server-to-server callers such as `mcp-server` and a
+  same-origin BFF never need this.)
+- **Cookie `sameSite`.** [`src/modules/auth/auth.cookies.ts`](../src/modules/auth/auth.cookies.ts)
+  reads `COOKIE_SAMESITE` (default `lax`). True cross-site usage needs
+  `COOKIE_SAMESITE=none`, which **automatically forces the cookie to `secure`**
+  (browsers reject `SameSite=None` without it).
+- **`secure` requires HTTPS.** By default the cookie is `secure` in production
+  (`NODE_ENV === 'production'`); override with `COOKIE_SECURE=true|false` if needed.
+  `sameSite=none` always forces it on, so the API **must** be served over HTTPS —
+  Railway, Render, Fly, and Koyeb all provide TLS on their default domains.
 - **Rate limiting.** 100 req/min per client is registered in-process; if you run
   multiple instances behind a load balancer, the limit is per-instance.
 - **Trust proxy / client IP.** Behind a platform proxy, the audited IP comes from
   the proxy unless you configure Fastify `trustProxy`. Consider this if accurate
   client IPs matter for the admin audit trail.
 
-> **Optional code follow-up.** Making `CORS_ORIGIN` and the cookie `sameSite`
-> configurable via environment variables would let a single build serve both
-> same-site and cross-site deployments. It is intentionally **not** part of this
-> guide — flagged here so the cross-site path is a conscious decision, not a
-> surprise.
+### Cross-site example
+
+For a front-end at `https://other-gpt.example.com` calling the API directly
+(no BFF), set on the API service:
+
+```env
+CORS_ORIGIN=https://other-gpt.example.com
+CORS_CREDENTIALS=true
+COOKIE_SAMESITE=none
+# COOKIE_SECURE is forced on by sameSite=none; NODE_ENV=production also sets it.
+```
+
+All four cross-site knobs default to the same-site behavior, so the BFF pattern
+keeps working with zero configuration.
 
 ## Smoke test after deploy
 

@@ -69,18 +69,21 @@ credentials, and the browser handles the cookie. From `fetch`, always set
 ### Cross-origin / deployment caveats
 
 The cookie defaults assume the front-end and the API are served on the **same
-site**. If your app is on a different origin than `identity-service`, plan for:
+site**. If your app is on a different origin than `identity-service`, the cross-site
+path is supported **by configuration** on the API (no code change):
 
-- **CORS:** the service currently registers CORS with `origin: false` (disabled).
-  Cross-origin browser calls require enabling CORS with the specific front-end
-  origin **and** `credentials: true`. Coordinate this as a deployment change.
-- **`sameSite`:** for genuinely cross-site requests the cookie must be
-  `sameSite=none; secure`. The default `lax` only covers same-site usage.
-- **HTTPS:** in production the cookie is `secure`, so the API must be served over
-  HTTPS.
+- **CORS:** disabled by default (`CORS_ORIGIN` unset). Set `CORS_ORIGIN` to your
+  front-end origin(s) (comma-separated) to allow cross-origin browser calls;
+  `CORS_CREDENTIALS` (default `true`) keeps cookies flowing.
+- **`sameSite`:** set `COOKIE_SAMESITE=none` for genuinely cross-site requests;
+  this automatically forces the cookie to `secure`. The default `lax` covers
+  same-site usage.
+- **HTTPS:** `sameSite=none` (and production) makes the cookie `secure`, so the API
+  must be served over HTTPS.
 
-Same-origin deployment (front-end and API behind one domain/reverse proxy) avoids
-all of the above and is the simplest setup.
+See the [Deployment Guide](./deployment.md) for the exact env values. Same-origin
+deployment (front-end and API behind one domain/reverse proxy, e.g. the BFF
+pattern) avoids all of the above and is the simplest setup.
 
 ## Error format
 
